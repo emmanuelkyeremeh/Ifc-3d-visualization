@@ -153,8 +153,13 @@ const IfcViewer = ({ ifcFile }) => {
         }
         sceneDataRef.current = sceneData;
 
-        const { world, fragments, fragmentIfcLoader, fragmentsModels } =
-          sceneData;
+        const { world, fragments, fragmentIfcLoader } = sceneData;
+
+        // Initialize FragmentsModels first
+        const workerUrl =
+          "https://thatopen.github.io/engine_fragment/resources/worker.mjs";
+        const fragmentsModels = new FRAGS.FragmentsModels(workerUrl);
+        sceneDataRef.current.fragmentsModels = fragmentsModels;
 
         // Load IFC using OBC.IfcLoader
         const loadedModel = await fragmentIfcLoader.load(buffer);
@@ -163,16 +168,43 @@ const IfcViewer = ({ ifcFile }) => {
         world.meshes.add(loadedModel);
         setModel(loadedModel);
 
-        // Convert fragments to FragmentsModels
+        // Wait for fragments to be processed
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // Get the fragment data
         const modelData = fragments.list.get(loadedModel.uuid);
-        if (modelData) {
+        if (!modelData) {
+          console.error("No fragment data found for model");
+          return;
+        }
+
+        try {
+          // Load the fragments model
           const fragmentsModel = await fragmentsModels.load(modelData.data, {
             modelId: "ifc_bim",
           });
+
+          // Set up the model
+          fragmentsModel.useCamera(world.camera.three);
+          world.scene.three.add(fragmentsModel.object);
+          world.meshes.add(fragmentsModel.object);
+
+          // Update fragments on camera movement
+          world.camera.controls.addEventListener("rest", () =>
+            fragmentsModels.update(true)
+          );
+          world.camera.controls.addEventListener("update", () =>
+            fragmentsModels.update()
+          );
+
+          // Store the fragments model
           setFragmentsModel(fragmentsModel);
-          console.log("Fragments model created:", fragmentsModel);
-        } else {
-          console.error("No fragment data found for model");
+          console.log(
+            "Fragments model created and added to scene:",
+            fragmentsModel
+          );
+        } catch (error) {
+          console.error("Error creating fragments model:", error);
         }
       } catch (error) {
         console.error("Error loading IFC file:", error);

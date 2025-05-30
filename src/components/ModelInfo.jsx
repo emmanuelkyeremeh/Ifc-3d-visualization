@@ -12,6 +12,7 @@ const ModelInfo = ({ model, world, fragments, onExit }) => {
 
   // Function to format property sets as per documentation
   const formatItemPsets = (rawPsets) => {
+    if (!rawPsets) return {};
     const result = {};
     for (const [_, pset] of rawPsets.entries()) {
       const { Name: psetName, HasProperties } = pset;
@@ -71,7 +72,7 @@ const ModelInfo = ({ model, world, fragments, onExit }) => {
       try {
         setIsLoading(true);
 
-        // Get element attributes
+        // Get element attributes with relations
         const [data] = await model.getItemsData([localId], {
           attributesDefault: true,
           relations: {
@@ -86,31 +87,29 @@ const ModelInfo = ({ model, world, fragments, onExit }) => {
           return;
         }
 
-        // Extract name
+        // Extract name and basic properties
         const name = data.Name?.value || "Unnamed Element";
         setElementName(name);
 
-        // Build properties
+        // Build properties object
         const properties = {
           "Express ID": localId || "N/A",
           "IFC Type": data.type || "N/A",
           "Global ID": data.GlobalId?.value || "N/A",
           Name: data.Name?.value || "N/A",
           Description: data.Description?.value || "N/A",
-          "Object Type": data.ObjectType || "N/A",
+          "Object Type": data.ObjectType?.value || "N/A",
           Tag: data.Tag?.value || "N/A",
         };
 
         // Add property sets
-        const psets = data.IsDefinedBy || [];
-        const formattedPsets = formatItemPsets(psets);
-        Object.entries(formattedPsets).forEach(([psetName, props], index) => {
-          properties[`Property Set ${index + 1}: ${psetName}`] = JSON.stringify(
-            props,
-            null,
-            2
-          );
-        });
+        if (data.IsDefinedBy) {
+          const formattedPsets = formatItemPsets(data.IsDefinedBy);
+          Object.entries(formattedPsets).forEach(([psetName, props], index) => {
+            properties[`Property Set ${index + 1}: ${psetName}`] =
+              JSON.stringify(props, null, 2);
+          });
+        }
 
         setElementProperties(properties);
       } catch (error) {
