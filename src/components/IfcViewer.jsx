@@ -17,7 +17,7 @@ import {
 } from "@heroicons/react/24/outline";
 import FloorPlanControls from "./FloorPlanControls";
 import ModelInfo from "./ModelInfo";
-import "../styles/IfcViewer.css";
+import "/src/styles/IfcViewer.css";
 
 const IfcViewer = ({ ifcFile }) => {
   const sceneDataRef = useRef(null);
