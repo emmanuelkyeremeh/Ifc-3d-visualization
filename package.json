@@ -10,7 +10,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@heroicons/react": "^2.2.0",
     "@thatopen/components": "^2.4.11",
+    "@thatopen/components-front": "^2.4.11",
+    "@thatopen/fragments": "^3.0.7",
     "@thatopen/ui": "^2.4.5",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

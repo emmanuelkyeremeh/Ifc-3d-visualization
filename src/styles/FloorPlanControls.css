@@ -1,0 +1,38 @@
+.floor-plan-panel {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    background: #ffffff;
+    border-radius: 8px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    min-width: 200px;
+    padding: 0.5rem;
+  }
+  
+  .floor-plan-panel bim-panel-section {
+    font-family: 'Inter', sans-serif;
+    color: #374151;
+  }
+  
+  .floor-plan-panel bim-button {
+    display: block;
+    width: 100%;
+    padding: 0.5rem 1rem;
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: #374151;
+    background: transparent;
+    border: none;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+  }
+  
+  .floor-plan-panel bim-button:hover {
+    background-color: #f3f4f6;
+  }
+  
+  .floor-plan-panel bim-button label {
+    color: #374151 !important;
+  }

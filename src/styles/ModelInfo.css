@@ -1,0 +1,90 @@
+.model-info-panel {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: white;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    padding: 15px;
+    max-width: 300px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    z-index: 1000;
+  }
+  
+  .panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  
+  .panel-header h3 {
+    margin: 0;
+    font-size: 1.2em;
+  }
+  
+  .close-button {
+    background: none;
+    border: none;
+    font-size: 1.2em;
+    cursor: pointer;
+  }
+  
+  .panel-content {
+    font-size: 0.9em;
+  }
+  
+  .info-section {
+    margin-bottom: 15px;
+  }
+  
+  .selected-element-section {
+    margin-top: 15px;
+  }
+  
+  .element-details {
+    margin-top: 10px;
+  }
+  
+  .element-name {
+    margin-bottom: 10px;
+    font-weight: bold;
+  }
+  
+  .element-properties {
+    margin-top: 10px;
+  }
+  
+  .property-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 5px;
+  }
+  
+  .property-key {
+    font-weight: bold;
+    margin-right: 10px;
+  }
+  
+  .property-value {
+    word-break: break-word;
+  }
+  
+  .action-buttons {
+    margin-top: 15px;
+    display: flex;
+    gap: 10px;
+  }
+  
+  .log-button {
+    background: #007bff;
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  
+  .log-button:hover {
+    background: #0056b3;
+  }
