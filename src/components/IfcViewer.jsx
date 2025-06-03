@@ -12,10 +12,8 @@ import {
   DocumentMagnifyingGlassIcon,
   ArrowTrendingUpIcon,
   ArrowsPointingOutIcon,
-  MapIcon,
   InformationCircleIcon,
 } from "@heroicons/react/24/outline";
-import FloorPlanControls from "./FloorPlanControls";
 import ModelInfo from "./ModelInfo";
 import "../styles/IfcViewer.css";
 
@@ -28,17 +26,13 @@ const IfcViewer = ({ ifcFile }) => {
   const faceRef = useRef(null);
   const lengthRef = useRef(null);
   const highlighterRef = useRef(null);
-  const plansRef = useRef(null);
-  const classifierRef = useRef(null);
-  const edgesRef = useRef(null);
-  const cullerRef = useRef(null);
   const fragmentsRef = useRef(null);
   const cleanupRef = useRef(null);
   const [activeTool, setActiveTool] = useState(null);
-  const [showFloorPlanControls, setShowFloorPlanControls] = useState(false);
   const [showModelInfo, setShowModelInfo] = useState(false);
   const [model, setModel] = useState(null);
   const [fragmentsModel, setFragmentsModel] = useState(null);
+  const [selectedElement, setSelectedElement] = useState(null);
 
   useEffect(() => {
     const createScene = async () => {
@@ -58,15 +52,17 @@ const IfcViewer = ({ ifcFile }) => {
 
       try {
         await components.init();
+        if (!world.scene.three) {
+          throw new Error("Scene initialization failed");
+        }
+        world.scene.setup();
+        world.renderer.postproduction.enabled = true;
+        world.renderer.postproduction.customEffects.outlineEnabled = true;
+        world.camera.controls.setLookAt(12, 6, 8, 0, 0, -10);
       } catch (error) {
-        console.error("Error initializing components:", error);
+        console.error("Error initializing components or scene:", error);
         return null;
       }
-
-      world.renderer.postproduction.enabled = true;
-      world.renderer.postproduction.customEffects.outlineEnabled = true;
-      world.camera.controls.setLookAt(12, 6, 8, 0, 0, -10);
-      world.scene.setup();
 
       const grids = components.get(OBC.Grids);
       const grid = grids.create(world);
@@ -82,55 +78,30 @@ const IfcViewer = ({ ifcFile }) => {
       const fragmentIfcLoader = components.get(OBC.IfcLoader);
       try {
         await fragmentIfcLoader.setup();
+        fragmentIfcLoader.settings.webIfc.COORDINATE_TO_ORIGIN = true;
+        const excludedCats = [
+          WEBIFC.IFCTENDONANCHOR,
+          WEBIFC.IFCREINFORCINGBAR,
+          WEBIFC.IFCREINFORCINGELEMENT,
+        ];
+        for (const cat of excludedCats) {
+          fragmentIfcLoader.settings.excludedCategories.add(cat);
+        }
       } catch (error) {
         console.error("Error setting up IFC loader:", error);
         return null;
       }
 
-      const excludedCats = [
-        WEBIFC.IFCTENDONANCHOR,
-        WEBIFC.IFCREINFORCINGBAR,
-        WEBIFC.IFCREINFORCINGELEMENT,
-      ];
-
-      for (const cat of excludedCats) {
-        fragmentIfcLoader.settings.excludedCategories.add(cat);
-      }
-
-      fragmentIfcLoader.settings.webIfc.COORDINATE_TO_ORIGIN = true;
-
-      // Initialize FragmentsModels for ModelInfo
-      const workerUrl =
-        "https://thatopen.github.io/engine_fragment/resources/worker.mjs";
+      const workerUrl = "/worker.mjs";
       const fragmentsModels = new FRAGS.FragmentsModels(workerUrl);
 
       fragmentsModels.models.list.onItemSet.add(({ value: loadedModel }) => {
-        loadedModel.useCamera(world.camera.three);
-        world.scene.three.add(loadedModel.object);
-        world.meshes.add(loadedModel.object);
-        fragmentsModels.update(true);
+        if (world.scene.three) {
+          loadedModel.useCamera(world.camera.three);
+          world.scene.three.add(loadedModel.object);
+          world.meshes.add(loadedModel.object);
+        }
       });
-
-      world.camera.controls.addEventListener("rest", () =>
-        fragmentsModels.update(true)
-      );
-      world.camera.controls.addEventListener("update", () =>
-        fragmentsModels.update()
-      );
-
-      const plans = components.get(OBCF.Plans);
-      plans.world = world;
-      plansRef.current = plans;
-
-      const classifier = components.get(OBC.Classifier);
-      classifierRef.current = classifier;
-
-      const edges = components.get(OBCF.ClipEdges);
-      edgesRef.current = edges;
-
-      const cullers = components.get(OBC.Cullers);
-      const culler = cullers.create(world);
-      cullerRef.current = culler;
 
       return {
         world,
@@ -153,51 +124,36 @@ const IfcViewer = ({ ifcFile }) => {
         }
         sceneDataRef.current = sceneData;
 
-        const { world, fragments, fragmentIfcLoader } = sceneData;
+        const { world, fragments, fragmentIfcLoader, fragmentsModels } =
+          sceneData;
 
-        // Initialize FragmentsModels first
-        const workerUrl =
-          "https://thatopen.github.io/engine_fragment/resources/worker.mjs";
-        const fragmentsModels = new FRAGS.FragmentsModels(workerUrl);
-        sceneDataRef.current.fragmentsModels = fragmentsModels;
+        if (!world.scene.three) {
+          console.error("Scene not initialized, cannot load model");
+          return;
+        }
 
-        // Load IFC using OBC.IfcLoader
         const loadedModel = await fragmentIfcLoader.load(buffer);
         loadedModel.name = "ifc_bim";
         world.scene.three.add(loadedModel);
         world.meshes.add(loadedModel);
         setModel(loadedModel);
+        console.log("IFC model loaded:", loadedModel);
 
-        // Wait for fragments to be processed
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-
-        // Get the fragment data
-        const modelData = fragments.list.get(loadedModel.uuid);
-        if (!modelData) {
-          console.error("No fragment data found for model");
+        const serializer = new FRAGS.IfcImporter();
+        serializer.wasm = {
+          absolute: true,
+          path: "https://unpkg.com/web-ifc@0.0.68/",
+        };
+        const fragmentBytes = await serializer.process({ bytes: buffer });
+        if (!fragmentBytes) {
+          console.error("Failed to convert IFC to fragments");
           return;
         }
 
         try {
-          // Load the fragments model
-          const fragmentsModel = await fragmentsModels.load(modelData.data, {
+          const fragmentsModel = await fragmentsModels.load(fragmentBytes, {
             modelId: "ifc_bim",
           });
-
-          // Set up the model
-          fragmentsModel.useCamera(world.camera.three);
-          world.scene.three.add(fragmentsModel.object);
-          world.meshes.add(fragmentsModel.object);
-
-          // Update fragments on camera movement
-          world.camera.controls.addEventListener("rest", () =>
-            fragmentsModels.update(true)
-          );
-          world.camera.controls.addEventListener("update", () =>
-            fragmentsModels.update()
-          );
-
-          // Store the fragments model
           setFragmentsModel(fragmentsModel);
           console.log(
             "Fragments model created and added to scene:",
@@ -218,12 +174,24 @@ const IfcViewer = ({ ifcFile }) => {
     return () => {
       if (sceneDataRef.current) {
         const { components, world, fragmentsModels } = sceneDataRef.current;
-        components.dispose();
-        fragmentsModels?.dispose();
-        world.scene.three.traverse((object) => {
-          if (object.geometry) object.geometry.dispose();
-          if (object.material) object.material.dispose();
-        });
+        try {
+          components?.dispose();
+          if (fragmentsModels) {
+            try {
+              fragmentsModels.dispose();
+            } catch (err) {
+              console.error("Error disposing fragmentsModels:", err);
+            }
+          }
+          if (world?.scene?.three) {
+            world.scene.three.traverse((object) => {
+              if (object.geometry) object.geometry.dispose();
+              if (object.material) object.material.dispose();
+            });
+          }
+        } catch (error) {
+          console.error("Error during cleanup:", error);
+        }
         sceneDataRef.current = null;
         console.log("Scene resources disposed.");
       }
@@ -231,99 +199,96 @@ const IfcViewer = ({ ifcFile }) => {
   }, [ifcFile]);
 
   useEffect(() => {
-    if (!sceneDataRef.current || !model) return;
+    if (!sceneDataRef.current || !model || !fragmentsModel) return;
 
-    const { world, fragments } = sceneDataRef.current;
-    if (!world.renderer || !world.scene) {
+    const { world, fragments, container } = sceneDataRef.current;
+    if (!world.renderer || !world.scene?.three) {
       console.error("World is not properly initialized");
       return;
     }
 
-    const { plans, classifier, edges, culler } = {
-      plans: plansRef.current,
-      classifier: classifierRef.current,
-      edges: edgesRef.current,
-      culler: cullerRef.current,
+    const highlightMaterial = {
+      color: new THREE.Color("gold"),
+      renderedFaces: FRAGS.RenderedFaces.TWO,
+      opacity: 1,
+      transparent: false,
     };
 
-    const setupFloorPlan = async () => {
+    let localId = null;
+
+    const highlight = async () => {
+      if (!localId || !fragmentsModel) return;
       try {
-        await plans.generate(model);
-
-        classifier.byModel(model.uuid, model);
-        classifier.byEntity(model);
-
-        const modelItems = classifier.find({ models: [model.uuid] });
-        const thickItems = classifier.find({
-          entities: ["IFCWALLSTANDARDCASE", "IFCWALL"],
-        });
-        const thinItems = classifier.find({
-          entities: ["IFCDOOR", "IFCWINDOW", "IFCPLATE", "IFCMEMBER"],
-        });
-
-        const grayFill = new THREE.MeshBasicMaterial({
-          color: "gray",
-          side: THREE.DoubleSide,
-        });
-        const blackLine = new THREE.LineBasicMaterial({ color: "black" });
-        const blackOutline = new THREE.MeshBasicMaterial({
-          color: "black",
-          opacity: 0.5,
-          side: THREE.DoubleSide,
-          transparent: true,
-        });
-
-        if (!edges.styles.list.thick) {
-          edges.styles.create(
-            "thick",
-            new Set(),
-            world,
-            blackLine,
-            grayFill,
-            blackOutline
-          );
-        }
-
-        for (const fragID in thickItems) {
-          const foundFrag = fragments.list.get(fragID);
-          if (!foundFrag) continue;
-          const { mesh } = foundFrag;
-          edges.styles.list.thick.fragments[fragID] = new Set(
-            thickItems[fragID]
-          );
-          edges.styles.list.thick.meshes.add(mesh);
-        }
-
-        if (!edges.styles.list.thin) {
-          edges.styles.create("thin", new Set(), world);
-        }
-
-        for (const fragID of thinItems) {
-          const foundFrag = fragments.list.get(fragID);
-          if (!foundFrag) continue;
-          const { mesh } = foundFrag;
-          edges.styles.list.thin.fragments[fragID] = new Set(thinItems[fragID]);
-          edges.styles.list.thin.meshes.add(mesh);
-        }
-
-        await edges.update(true);
-
-        for (const fragment of model.items) {
-          culler.add(fragment.mesh);
-        }
-
-        culler.needsUpdate = true;
-
-        world.camera.controls.addEventListener("sleep", () => {
-          culler.needsUpdate = true;
-        });
+        await fragmentsModel.highlight([localId], highlightMaterial);
       } catch (error) {
-        console.error("Error setting up floor plan:", error);
+        console.error("Error highlighting element:", error);
       }
     };
 
-    setupFloorPlan();
-  }, [model]);
+    const resetHighlight = async () => {
+      if (!localId || !fragmentsModel) return;
+      try {
+        await fragmentsModel.resetHighlight([localId]);
+      } catch (error) {
+        console.error("Error resetting highlight:", error);
+      }
+    };
+
+    const getName = async () => {
+      if (!localId || !fragmentsModel) return null;
+      try {
+        const [data] = await fragmentsModel.getItemsData([localId], {
+          attributesDefault: false,
+          attributes: [], //["Name"],
+        });
+        console.log(data);
+        const Name = data?.Name;
+        if (!(Name && "value" in Name)) return null;
+        return Name.value;
+      } catch (error) {
+        console.error("Error getting element name:", error);
+        return null;
+      }
+    };
+
+    const handleClick = async (event) => {
+      if (activeTool !== "modelinfo" || !fragmentsModel) return;
+      const mouse = new THREE.Vector2();
+      mouse.x = (event.clientX / container.clientWidth) * 2 - 1;
+      mouse.y = -(event.clientY / container.clientHeight) * 2 + 1;
+      try {
+        const result = await fragmentsModel.raycast({
+          camera: world.camera.three,
+          mouse,
+          dom: world.renderer.three.domElement,
+        });
+        const promises = [];
+        if (result && result.localId) {
+          promises.push(resetHighlight());
+          localId = result.localId;
+          const name = await getName();
+          console.log("Selected element:", { localId, name });
+          setSelectedElement({ localId, name: name || "Unknown" });
+          promises.push(highlight());
+        } else {
+          promises.push(resetHighlight());
+          localId = null;
+          setSelectedElement(null);
+        }
+        await Promise.all(promises);
+      } catch (error) {
+        console.error("Error during raycasting:", error);
+      }
+    };
+
+    if (activeTool === "modelinfo") {
+      container.addEventListener("click", handleClick);
+    }
+
+    return () => {
+      container.removeEventListener("click", handleClick);
+    };
+  }, [model, fragmentsModel, activeTool]);
 
   const setupAngleMeasurement = (world, components, container) => {
     try {
@@ -336,12 +301,22 @@ const IfcViewer = ({ ifcFile }) => {
       const handleDoubleClick = (event) => {
         event.preventDefault();
         event.stopPropagation();
-        if (angles.enabled && angles.world) angles.create();
+        if (angles.enabled && angles.world) {
+          try {
+            angles.create();
+          } catch (error) {
+            console.error("Error creating angle measurement:", error);
+          }
+        }
       };
 
       const onKeyDown = (event) => {
         if (event.code === "Delete" || event.code === "Backspace") {
-          angles.deleteAll();
+          try {
+            angles.deleteAll();
+          } catch (error) {
+            console.error("Error deleting angles:", error);
+          }
         }
       };
 
@@ -370,41 +345,45 @@ const IfcViewer = ({ ifcFile }) => {
       const canvas = world.renderer.three.domElement;
 
       const onPointerMove = () => {
-        const result = caster.castRay([model]);
-        if (
-          !result ||
-          !(result.object instanceof THREE.Mesh) ||
-          result.faceIndex === undefined
-        ) {
-          return;
-        }
-
-        const face = measurements.getFace(
-          result.object,
-          result.faceIndex,
-          result.instanceId
-        );
-        if (face) {
-          const points = [];
-          for (const edge of face.edges) {
-            points.push(...edge.points);
+        try {
+          const result = caster.castRay([model]);
+          if (
+            !result ||
+            !(result.object instanceof THREE.Mesh) ||
+            result.faceIndex === undefined
+          ) {
+            return;
           }
 
-          if (line) {
-            line.geometry.dispose();
-            line.material.dispose();
-            world.scene.three.remove(line);
+          const face = measurements.getFace(
+            result.object,
+            result.faceIndex,
+            result.instanceId
+          );
+          if (face) {
+            const points = [];
+            for (const edge of face.edges) {
+              points.push(...edge.points);
+            }
+
+            if (line) {
+              line.geometry.dispose();
+              line.material.dispose();
+              world.scene.three.remove(line);
+            }
+
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const material = new THREE.LineBasicMaterial({
+              color: 0xff0000,
+              depthTest: false,
+            });
+
+            line = new THREE.LineSegments(geometry, material);
+            world.scene.three.add(line);
+            lineRef.current = line;
           }
-
-          const geometry = new THREE.BufferGeometry().setFromPoints(points);
-          const material = new THREE.LineBasicMaterial({
-            color: 0xff0000,
-            depthTest: false,
-          });
-
-          line = new THREE.LineSegments(geometry, material);
-          world.scene.three.add(line);
-          lineRef.current = line;
+        } catch (error) {
+          console.error("Error during line measurement raycast:", error);
         }
       };
 
@@ -441,8 +420,12 @@ const IfcViewer = ({ ifcFile }) => {
         if (clickTimeout) clearTimeout(clickTimeout);
         if (!isCreating) {
           if (areaDims.enabled && areaDims.world) {
-            areaDims.create();
-            isCreating = true;
+            try {
+              areaDims.create();
+              isCreating = true;
+            } catch (error) {
+              console.error("Error creating area measurement:", error);
+            }
           }
         }
       };
@@ -452,6 +435,7 @@ const IfcViewer = ({ ifcFile }) => {
         if (clickTimeout) clearTimeout(clickTimeout);
         clickTimeout = setTimeout(() => {
           if (isCreating && event.detail === 1) {
+            // Handle single click during creation if needed
           }
           clickTimeout = null;
         }, 200);
@@ -461,25 +445,33 @@ const IfcViewer = ({ ifcFile }) => {
         event.preventDefault();
         event.stopPropagation();
         if (isCreating) {
-          if (areaDims.endCreation) areaDims.endCreation();
-          else if (areaDims.finish) areaDims.finish();
-          else if (areaDims.complete) areaDims.complete();
-          isCreating = false;
+          try {
+            if (areaDims.endCreation) areaDims.endCreation();
+            else if (areaDims.finish) areaDims.finish();
+            else if (areaDims.complete) areaDims.complete();
+            isCreating = false;
+          } catch (error) {
+            console.error("Error ending area measurement:", error);
+          }
         }
       };
 
       const onKeyDown = (event) => {
-        if (event.code === "Delete" || event.code === "Backspace") {
-          areaDims.deleteAll();
-          isCreating = false;
-        } else if (event.code === "Escape" && isCreating) {
-          if (areaDims.cancel) areaDims.cancel();
-          else if (areaDims.endCreation) areaDims.endCreation();
-          isCreating = false;
-        } else if (event.code === "Enter" && isCreating) {
-          if (areaDims.endCreation) areaDims.endCreation();
-          else if (areaDims.finish) areaDims.finish();
-          isCreating = false;
+        try {
+          if (event.code === "Delete" || event.code === "Backspace") {
+            areaDims.deleteAll();
+            isCreating = false;
+          } else if (event.code === "Escape" && isCreating) {
+            if (areaDims.cancel) areaDims.cancel();
+            else if (areaDims.endCreation) areaDims.endCreation();
+            isCreating = false;
+          } else if (event.code === "Enter" && isCreating) {
+            if (areaDims.endCreation) areaDims.endCreation();
+            else if (areaDims.finish) areaDims.finish();
+            isCreating = false;
+          }
+        } catch (error) {
+          console.error("Error handling area measurement keydown:", error);
         }
       };
 
@@ -514,12 +506,22 @@ const IfcViewer = ({ ifcFile }) => {
       const handleDoubleClick = (event) => {
         event.preventDefault();
         event.stopPropagation();
-        if (edges.enabled && edges.world) edges.create();
+        if (edges.enabled && edges.world) {
+          try {
+            edges.create();
+          } catch (error) {
+            console.error("Error creating edge measurement:", error);
+          }
+        }
       };
 
       const onKeyDown = (event) => {
         if (event.code === "Delete" || event.code === "Backspace") {
-          edges.deleteAll();
+          try {
+            edges.deleteAll();
+          } catch (error) {
+            console.error("Error deleting edges:", error);
+          }
         }
       };
 
@@ -549,12 +551,22 @@ const IfcViewer = ({ ifcFile }) => {
       const handleDoubleClick = (event) => {
         event.preventDefault();
         event.stopPropagation();
-        if (faces.enabled && faces.world) faces.create();
+        if (faces.enabled && faces.world) {
+          try {
+            faces.create();
+          } catch (error) {
+            console.error("Error creating face measurement:", error);
+          }
+        }
       };
 
       const onKeyDown = (event) => {
         if (event.code === "Delete" || event.code === "Backspace") {
-          faces.deleteAll();
+          try {
+            faces.deleteAll();
+          } catch (error) {
+            console.error("Error deleting faces:", error);
+          }
         }
       };
 
@@ -584,12 +596,22 @@ const IfcViewer = ({ ifcFile }) => {
       const handleDoubleClick = (event) => {
         event.preventDefault();
         event.stopPropagation();
-        if (lengths.enabled && lengths.world) lengths.create();
+        if (lengths.enabled && lengths.world) {
+          try {
+            lengths.create();
+          } catch (error) {
+            console.error("Error creating length measurement:", error);
+          }
+        }
       };
 
       const onKeyDown = (event) => {
         if (event.code === "Delete" || event.code === "Backspace") {
-          lengths.delete();
+          try {
+            lengths.delete();
+          } catch (error) {
+            console.error("Error deleting lengths:", error);
+          }
         }
       };
 
@@ -620,10 +642,14 @@ const IfcViewer = ({ ifcFile }) => {
       outliner.enabled = true;
 
       const handleClick = async (event) => {
-        const result = await highlighter.highlight(event);
-        if (result && result.expressID) {
-          console.log("Selected element with Express ID:", result.expressID);
-          console.log("Element data:", result);
+        try {
+          const result = await highlighter.highlight(event);
+          if (result && result.expressID) {
+            console.log("Selected element with Express ID:", result.expressID);
+            console.log("Element data:", result);
+          }
+        } catch (error) {
+          console.error("Error highlighting element:", error);
         }
       };
 
@@ -678,7 +704,7 @@ const IfcViewer = ({ ifcFile }) => {
     }
 
     const { world, components, container } = sceneDataRef.current;
-    if (!world.renderer || !world.scene) {
+    if (!world.renderer || !world.scene?.three) {
       console.error("World is not properly initialized for tool setup");
       return;
     }
@@ -712,8 +738,6 @@ const IfcViewer = ({ ifcFile }) => {
         );
       } else if (activeTool === "highlighter") {
         cleanupRef.current = setupHighlighter(world, components, container);
-      } else if (activeTool === "floorplan") {
-        setShowFloorPlanControls(true);
       } else if (activeTool === "modelinfo") {
         setShowModelInfo(true);
       }
@@ -728,7 +752,6 @@ const IfcViewer = ({ ifcFile }) => {
         "face",
         "length",
         "highlighter",
-        "floorplan",
         "modelinfo",
       ].includes(activeTool)
     ) {
@@ -759,13 +782,12 @@ const IfcViewer = ({ ifcFile }) => {
         cleanupRef.current();
         cleanupRef.current = null;
       }
-      setShowFloorPlanControls(false);
       setShowModelInfo(false);
       if (highlighterRef.current) {
         highlighterRef.current.enabled = false;
       }
     };
-  }, [activeTool, model]);
+  }, [activeTool, model, fragmentsModel]);
 
   return (
     <div className="viewer-container">
@@ -829,17 +851,6 @@ const IfcViewer = ({ ifcFile }) => {
         </button>
         <button
           onClick={() =>
-            setActiveTool(activeTool === "floorplan" ? null : "floorplan")
-          }
-          className={`control-button ${
-            activeTool === "floorplan" ? "active" : ""
-          }`}
-        >
-          <MapIcon className="icon" />
-          Floor Plan
-        </button>
-        <button
-          onClick={() =>
             setActiveTool(activeTool === "modelinfo" ? null : "modelinfo")
           }
           className={`control-button ${
@@ -852,81 +863,73 @@ const IfcViewer = ({ ifcFile }) => {
       </div>
       <div className="scene-wrapper">
         <div id="scene-container" className="scene-container">
-          {activeTool &&
-            activeTool !== "floorplan" &&
-            activeTool !== "modelinfo" && (
-              <div className="tool-instructions">
-                {activeTool === "angle" && (
-                  <div>
-                    <div className="font-bold">Angle Tool Active</div>
-                    <div>• Double-click to start angle measurement</div>
-                    <div>• Click 3 points to complete</div>
-                    <div>• DEL to delete all angles</div>
-                  </div>
-                )}
-                {activeTool === "area" && (
-                  <div>
-                    <div className="font-bold">Area Tool Active</div>
-                    <div>• Double-click to start area measurement</div>
-                    <div>• Single-click to add points</div>
-                    <div>• Right-click or Enter to finish area</div>
-                    <div>• ESC to cancel, DEL to delete all</div>
-                  </div>
-                )}
-                {activeTool === "line" && (
-                  <div>
-                    <div className="font-bold">Line Tool Active</div>
-                    <div>• Move mouse over model faces</div>
-                  </div>
-                )}
-                {activeTool === "edge" && (
-                  <div>
-                    <div className="font-bold">Edge Tool Active</div>
-                    <div>• Double-click to create edge measurement</div>
-                    <div>• DEL to delete all edges</div>
-                  </div>
-                )}
-                {activeTool === "face" && (
-                  <div>
-                    <div className="font-bold">Face Tool Active</div>
-                    <div>• Double-click to create face measurement</div>
-                    <div>• DEL to delete all faces</div>
-                  </div>
-                )}
-                {activeTool === "length" && (
-                  <div>
-                    <div className="font-bold">Length Tool Active</div>
-                    <div>• Double-click to create length measurement</div>
-                    <div>• DEL or Backspace to delete all lengths</div>
-                  </div>
-                )}
-                {activeTool === "highlighter" && (
-                  <div>
-                    <div className="font-bold">Highlighter Active</div>
-                    <div>• Hover to highlight elements</div>
-                    <div>• Click to select with outline</div>
-                    <div>• Click elsewhere to clear selection</div>
-                  </div>
-                )}
-              </div>
-            )}
+          {activeTool && (
+            <div className="tool-instructions">
+              {activeTool === "angle" && (
+                <div>
+                  <div className="font-bold">Angle Tool Active</div>
+                  <div>• Double-click to start angle measurement</div>
+                  <div>• Click 3 points to complete</div>
+                  <div>• DEL to delete all angles</div>
+                </div>
+              )}
+              {activeTool === "area" && (
+                <div>
+                  <div className="font-bold">Area Tool Active</div>
+                  <div>• Double-click to start area measurement</div>
+                  <div>• Single-click to add points</div>
+                  <div>• Right-click or Enter to finish area</div>
+                  <div>• ESC to cancel, DEL to delete all</div>
+                </div>
+              )}
+              {activeTool === "line" && (
+                <div>
+                  <div className="font-bold">Line Tool Active</div>
+                  <div>• Move mouse over model faces</div>
+                </div>
+              )}
+              {activeTool === "edge" && (
+                <div>
+                  <div className="font-bold">Edge Tool Active</div>
+                  <div>• Double-click to create edge measurement</div>
+                  <div>• DEL to delete all edges</div>
+                </div>
+              )}
+              {activeTool === "face" && (
+                <div>
+                  <div className="font-bold">Face Tool Active</div>
+                  <div>• Double-click to create face measurement</div>
+                  <div>• DEL to delete all faces</div>
+                </div>
+              )}
+              {activeTool === "length" && (
+                <div>
+                  <div className="font-bold">Length Tool Active</div>
+                  <div>• Double-click to create length measurement</div>
+                  <div>• DEL or Backspace to delete all lengths</div>
+                </div>
+              )}
+              {activeTool === "highlighter" && (
+                <div>
+                  <div className="font-bold">Highlighter Active</div>
+                  <div>• Hover to highlight elements</div>
+                  <div>• Click to select with outline</div>
+                  <div>• Click elsewhere to clear selection</div>
+                </div>
+              )}
+              {activeTool === "modelinfo" && (
+                <div>
+                  <div className="font-bold">Model Info Active</div>
+                  <div>• Click an element to view its name</div>
+                  <div>• Click elsewhere to clear selection</div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
-        {showFloorPlanControls && model && (
-          <FloorPlanControls
-            plans={plansRef.current}
-            world={sceneDataRef.current?.world}
-            model={model}
-            classifier={classifierRef.current}
-            highlighter={highlighterRef.current}
-            culler={cullerRef.current}
-            onExit={() => setActiveTool(null)}
-          />
-        )}
         {showModelInfo && fragmentsModel && (
           <ModelInfo
-            model={fragmentsModel}
-            world={sceneDataRef.current?.world}
-            fragments={sceneDataRef.current?.fragmentsModels}
+            selectedElement={selectedElement}
             onExit={() => setActiveTool(null)}
           />
         )}
