@@ -40,9 +40,11 @@ const ModelInfo = ({ selectedElement, onExit }) => {
         <div className="panel-section">
           <h3>Selected Element</h3>
           {selectedElement ? (
-            <p>Element Name: {selectedElement.name}</p>
+            <p>
+              <strong>Name:</strong> {selectedElement.name}
+            </p>
           ) : (
-            <p>💡 No element selected.</p>
+            <p>💡 No element selected. Click an element in the viewer.</p>
           )}
         </div>
         <div className="panel-section">

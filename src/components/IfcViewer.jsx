@@ -95,6 +95,13 @@ const IfcViewer = ({ ifcFile }) => {
       const workerUrl = "/worker.mjs";
       const fragmentsModels = new FRAGS.FragmentsModels(workerUrl);
 
+      world.camera.controls.addEventListener("rest", () =>
+        fragmentsModels.update(true)
+      );
+      world.camera.controls.addEventListener("update", () =>
+        fragmentsModels.update()
+      );
+
       fragmentsModels.models.list.onItemSet.add(({ value: loadedModel }) => {
         if (world.scene.three) {
           loadedModel.useCamera(world.camera.three);
@@ -239,14 +246,60 @@ const IfcViewer = ({ ifcFile }) => {
       try {
         const [data] = await fragmentsModel.getItemsData([localId], {
           attributesDefault: false,
-          attributes: [], //["Name"],
+          attributes: ["Name"],
         });
-        console.log(data);
         const Name = data?.Name;
-        if (!(Name && "value" in Name)) return null;
-        return Name.value;
+        if (!(Name && "value" in Name)) return "Unnamed Element";
+        return Name.value || "Unnamed Element";
       } catch (error) {
         console.error("Error getting element name:", error);
+        return "Unnamed Element";
+      }
+    };
+
+    const getAttributes = async () => {
+      if (!localId || !fragmentsModel) return null;
+      try {
+        const [data] = await fragmentsModel.getItemsData([localId], {
+          attributesDefault: true, // Get all attributes
+          relations: {
+            IsDefinedBy: { attributes: true, relations: true },
+            DefinesOccurrence: { attributes: false, relations: false },
+          },
+        });
+        // Format property sets for better readability
+        const formatPsets = (rawPsets) => {
+          if (!rawPsets || !Array.isArray(rawPsets)) return {};
+          const result = {};
+          for (const pset of rawPsets) {
+            const { Name: psetName, HasProperties } = pset;
+            if (!("value" in psetName && Array.isArray(HasProperties)))
+              continue;
+            const props = {};
+            for (const prop of HasProperties) {
+              const { Name, NominalValue } = prop;
+              if (!("value" in Name && "value" in NominalValue)) continue;
+              const name = Name.value;
+              const nominalValue = NominalValue.value;
+              if (name && nominalValue !== undefined) {
+                props[name] = nominalValue;
+              }
+            }
+            result[psetName.value] = props;
+          }
+          return result;
+        };
+        const formattedData = {
+          attributes: data,
+          propertySets: formatPsets(data.IsDefinedBy),
+        };
+        console.log(
+          "Selected element attributes and property sets:",
+          formattedData
+        );
+        return formattedData;
+      } catch (error) {
+        console.error("Error getting element attributes:", error);
         return null;
       }
     };
@@ -254,8 +307,9 @@ const IfcViewer = ({ ifcFile }) => {
     const handleClick = async (event) => {
       if (activeTool !== "modelinfo" || !fragmentsModel) return;
       const mouse = new THREE.Vector2();
-      mouse.x = (event.clientX / container.clientWidth) * 2 - 1;
-      mouse.y = -(event.clientY / container.clientHeight) * 2 + 1;
+      // Calculate mouse coordinates as per the tutorial
+      mouse.x = event.clientX;
+      mouse.y = event.clientY;
       try {
         const result = await fragmentsModel.raycast({
           camera: world.camera.three,
@@ -263,12 +317,13 @@ const IfcViewer = ({ ifcFile }) => {
           dom: world.renderer.three.domElement,
         });
         const promises = [];
-        if (result && result.localId) {
+        if (result && result.localId !== null) {
           promises.push(resetHighlight());
           localId = result.localId;
           const name = await getName();
+          await getAttributes();
           console.log("Selected element:", { localId, name });
-          setSelectedElement({ localId, name: name || "Unknown" });
+          setSelectedElement({ localId, name });
           promises.push(highlight());
         } else {
           promises.push(resetHighlight());
@@ -278,6 +333,7 @@ const IfcViewer = ({ ifcFile }) => {
         await Promise.all(promises);
       } catch (error) {
         console.error("Error during raycasting:", error);
+        setSelectedElement(null);
       }
     };
 
@@ -287,6 +343,9 @@ const IfcViewer = ({ ifcFile }) => {
 
     return () => {
       container.removeEventListener("click", handleClick);
+      resetHighlight(); // Clear highlight on cleanup
+      localId = null;
+      setSelectedElement(null);
     };
   }, [model, fragmentsModel, activeTool]);
 
