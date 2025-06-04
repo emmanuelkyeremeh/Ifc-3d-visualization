@@ -4,38 +4,15 @@ import * as OBC from "@thatopen/components";
 import * as OBCF from "@thatopen/components-front";
 import * as THREE from "three";
 import * as FRAGS from "@thatopen/fragments";
-import {
-  ArrowUpIcon,
-  ArrowsUpDownIcon,
-  Square3Stack3DIcon,
-  Square2StackIcon,
-  DocumentMagnifyingGlassIcon,
-  ArrowTrendingUpIcon,
-  ArrowsPointingOutIcon,
-  InformationCircleIcon,
-  MapIcon,
-} from "@heroicons/react/24/outline";
+import { InformationCircleIcon } from "@heroicons/react/24/outline";
 import ModelInfo from "./ModelInfo";
-import FloorPlans from "./FloorPlans";
 import "../styles/IfcViewer.css";
 
 const IfcViewer = ({ ifcFile }) => {
   const sceneDataRef = useRef(null);
-  const anglesRef = useRef(null);
-  const lineRef = useRef(null);
-  const areaRef = useRef(null);
-  const edgeRef = useRef(null);
-  const faceRef = useRef(null);
-  const lengthRef = useRef(null);
-  const highlighterRef = useRef(null);
-  const fragmentsRef = useRef(null);
-  const cleanupRef = useRef(null);
-  const plansRef = useRef(null);
   const [activeTool, setActiveTool] = useState(null);
   const [showModelInfo, setShowModelInfo] = useState(false);
-  const [showFloorPlans, setShowFloorPlans] = useState(false);
   const [model, setModel] = useState(null);
-  const [fragmentsModel, setFragmentsModel] = useState(null);
   const [selectedElement, setSelectedElement] = useState(null);
 
   useEffect(() => {
@@ -76,9 +53,6 @@ const IfcViewer = ({ ifcFile }) => {
         grid.three
       );
 
-      const fragments = components.get(OBC.FragmentsManager);
-      fragmentsRef.current = fragments;
-
       const fragmentIfcLoader = components.get(OBC.IfcLoader);
       try {
         await fragmentIfcLoader.setup();
@@ -97,16 +71,16 @@ const IfcViewer = ({ ifcFile }) => {
       }
 
       const workerUrl = "/worker.mjs";
-      const fragmentsModels = new FRAGS.FragmentsModels(workerUrl);
+      const fragments = new FRAGS.FragmentsModels(workerUrl);
 
       world.camera.controls.addEventListener("rest", () =>
-        fragmentsModels.update(true)
+        fragments.update(true)
       );
       world.camera.controls.addEventListener("update", () =>
-        fragmentsModels.update()
+        fragments.update()
       );
 
-      fragmentsModels.models.list.onItemSet.add(({ value: loadedModel }) => {
+      fragments.models.list.onItemSet.add(({ value: loadedModel }) => {
         if (world.scene.three) {
           loadedModel.useCamera(world.camera.three);
           world.scene.three.add(loadedModel.object);
@@ -116,11 +90,10 @@ const IfcViewer = ({ ifcFile }) => {
 
       return {
         world,
-        fragments,
         fragmentIfcLoader,
         components,
         container,
-        fragmentsModels,
+        fragments,
       };
     };
 
@@ -135,20 +108,12 @@ const IfcViewer = ({ ifcFile }) => {
         }
         sceneDataRef.current = sceneData;
 
-        const { world, fragments, fragmentIfcLoader, fragmentsModels } =
-          sceneData;
+        const { world, fragments } = sceneData;
 
         if (!world.scene.three) {
           console.error("Scene not initialized, cannot load model");
           return;
         }
-
-        const loadedModel = await fragmentIfcLoader.load(buffer);
-        loadedModel.name = "ifc_bim";
-        world.scene.three.add(loadedModel);
-        world.meshes.add(loadedModel);
-        setModel(loadedModel);
-        console.log("IFC model loaded:", loadedModel);
 
         const serializer = new FRAGS.IfcImporter();
         serializer.wasm = {
@@ -162,16 +127,13 @@ const IfcViewer = ({ ifcFile }) => {
         }
 
         try {
-          const fragmentsModel = await fragmentsModels.load(fragmentBytes, {
+          const Model = await fragments.load(fragmentBytes, {
             modelId: "ifc_bim",
           });
-          setFragmentsModel(fragmentsModel);
-          console.log(
-            "Fragments model created and added to scene:",
-            fragmentsModel
-          );
+          setModel(Model);
+          console.log("model created and added to scene:", Model);
         } catch (error) {
-          console.error("Error creating fragments model:", error);
+          console.error("model:", error);
         }
       } catch (error) {
         console.error("Error loading IFC file:", error);
@@ -184,14 +146,14 @@ const IfcViewer = ({ ifcFile }) => {
 
     return () => {
       if (sceneDataRef.current) {
-        const { components, world, fragmentsModels } = sceneDataRef.current;
+        const { components, world, fragments } = sceneDataRef.current;
         try {
           components?.dispose();
-          if (fragmentsModels) {
+          if (fragments) {
             try {
-              fragmentsModels.dispose();
+              fragments.dispose();
             } catch (err) {
-              console.error("Error disposing fragmentsModels:", err);
+              console.error("Error disposing fragments:", err);
             }
           }
           if (world?.scene?.three) {
@@ -210,7 +172,7 @@ const IfcViewer = ({ ifcFile }) => {
   }, [ifcFile]);
 
   useEffect(() => {
-    if (!sceneDataRef.current || !model || !fragmentsModel) return;
+    if (!sceneDataRef.current || !model) return;
 
     const { world, fragments, container } = sceneDataRef.current;
     if (!world.renderer || !world.scene?.three) {
@@ -228,27 +190,27 @@ const IfcViewer = ({ ifcFile }) => {
     let localId = null;
 
     const highlight = async () => {
-      if (!localId || !fragmentsModel) return;
+      if (!localId || !model) return;
       try {
-        await fragmentsModel.highlight([localId], highlightMaterial);
+        await model.highlight([localId], highlightMaterial);
       } catch (error) {
         console.error("Error highlighting element:", error);
       }
     };
 
     const resetHighlight = async () => {
-      if (!localId || !fragmentsModel) return;
+      if (!localId || !model) return;
       try {
-        await fragmentsModel.resetHighlight([localId]);
+        await model.resetHighlight([localId]);
       } catch (error) {
         console.error("Error resetting highlight:", error);
       }
     };
 
     const getName = async () => {
-      if (!localId || !fragmentsModel) return null;
+      if (!localId || !model) return null;
       try {
-        const [data] = await fragmentsModel.getItemsData([localId], {
+        const [data] = await model.getItemsData([localId], {
           attributesDefault: false,
           attributes: ["Name"],
         });
@@ -262,9 +224,9 @@ const IfcViewer = ({ ifcFile }) => {
     };
 
     const getAttributes = async () => {
-      if (!localId || !fragmentsModel) return null;
+      if (!localId || !model) return null;
       try {
-        const [data] = await fragmentsModel.getItemsData([localId], {
+        const [data] = await model.getItemsData([localId], {
           attributesDefault: true,
           relations: {
             IsDefinedBy: { attributes: true, relations: true },
@@ -308,12 +270,12 @@ const IfcViewer = ({ ifcFile }) => {
     };
 
     const handleClick = async (event) => {
-      if (activeTool !== "modelinfo" || !fragmentsModel) return;
+      if (activeTool !== "modelinfo" || !model) return;
       const mouse = new THREE.Vector2();
       mouse.x = event.clientX;
       mouse.y = event.clientY;
       try {
-        const result = await fragmentsModel.raycast({
+        const result = await model.raycast({
           camera: world.camera.three,
           mouse,
           dom: world.renderer.three.domElement,
@@ -349,749 +311,21 @@ const IfcViewer = ({ ifcFile }) => {
       localId = null;
       setSelectedElement(null);
     };
-  }, [model, fragmentsModel, activeTool]);
-
-  const setupAngleMeasurement = (world, components, container) => {
-    try {
-      const angles = components.get(OBCF.AngleMeasurement);
-      angles.world = world;
-      if (angles.config) angles.config.snapDistance = 25;
-      angles.enabled = true;
-      anglesRef.current = angles;
-
-      const handleDoubleClick = (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (angles.enabled && angles.world) {
-          try {
-            angles.create();
-          } catch (error) {
-            console.error("Error creating angle measurement:", error);
-          }
-        }
-      };
-
-      const onKeyDown = (event) => {
-        if (event.code === "Delete" || event.code === "Backspace") {
-          try {
-            angles.deleteAll();
-          } catch (error) {
-            console.error("Error deleting angles:", error);
-          }
-        }
-      };
-
-      container.addEventListener("dblclick", handleDoubleClick, true);
-      window.addEventListener("keydown", onKeyDown);
-
-      return () => {
-        angles.enabled = false;
-        angles.deleteAll();
-        container.removeEventListener("dblclick", handleDoubleClick, true);
-        window.removeEventListener("keydown", onKeyDown);
-      };
-    } catch (error) {
-      console.error("Error setting up angle measurement:", error);
-      return () => {};
-    }
-  };
-
-  const setupLineMeasurement = (world, components, model) => {
-    try {
-      const measurements = components.get(OBC.MeasurementUtils);
-      const casters = components.get(OBC.Raycasters);
-      const caster = casters.get(world);
-      let line = null;
-
-      const canvas = world.renderer.three.domElement;
-
-      const onPointerMove = () => {
-        try {
-          const result = caster.castRay([model]);
-          if (
-            !result ||
-            !(result.object instanceof THREE.Mesh) ||
-            result.faceIndex === undefined
-          ) {
-            return;
-          }
-
-          const face = measurements.getFace(
-            result.object,
-            result.faceIndex,
-            result.instanceId
-          );
-          if (face) {
-            const points = [];
-            for (const edge of face.edges) {
-              points.push(...edge.points);
-            }
-
-            if (line) {
-              line.geometry.dispose();
-              line.material.dispose();
-              world.scene.three.remove(line);
-            }
-
-            const geometry = new THREE.BufferGeometry().setFromPoints(points);
-            const material = new THREE.LineBasicMaterial({
-              color: 0xff0000,
-              depthTest: false,
-            });
-
-            line = new THREE.LineSegments(geometry, material);
-            world.scene.three.add(line);
-            lineRef.current = line;
-          }
-        } catch (error) {
-          console.error("Error during line measurement raycast:", error);
-        }
-      };
-
-      canvas.addEventListener("pointermove", onPointerMove);
-
-      return () => {
-        if (line) {
-          line.geometry.dispose();
-          line.material.dispose();
-          world.scene.three.remove(line);
-        }
-        canvas.removeEventListener("pointermove", onPointerMove);
-      };
-    } catch (error) {
-      console.error("Error setting up line measurement:", error);
-      return () => {};
-    }
-  };
-
-  const setupAreaMeasurement = (world, components, container) => {
-    try {
-      const areaDims = components.get(OBCF.AreaMeasurement);
-      areaDims.world = world;
-      if (areaDims.config) areaDims.config.snapDistance = 25;
-      areaDims.enabled = true;
-      areaRef.current = areaDims;
-
-      let isCreating = false;
-      let clickTimeout = null;
-
-      const handleDoubleClick = (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (clickTimeout) clearTimeout(clickTimeout);
-        if (!isCreating) {
-          if (areaDims.enabled && areaDims.world) {
-            try {
-              areaDims.create();
-              isCreating = true;
-            } catch (error) {
-              console.error("Error creating area measurement:", error);
-            }
-          }
-        }
-      };
-
-      const handleClick = (event) => {
-        if (event.detail === 2) return;
-        if (clickTimeout) clearTimeout(clickTimeout);
-        clickTimeout = setTimeout(() => {
-          if (isCreating && event.detail === 1) {
-            // Handle single click during creation if needed
-          }
-          clickTimeout = null;
-        }, 200);
-      };
-
-      const handleRightClick = (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (isCreating) {
-          try {
-            if (areaDims.endCreation) areaDims.endCreation();
-            else if (areaDims.finish) areaDims.finish();
-            else if (areaDims.complete) areaDims.complete();
-            isCreating = false;
-          } catch (error) {
-            console.error("Error ending area measurement:", error);
-          }
-        }
-      };
-
-      const onKeyDown = (event) => {
-        try {
-          if (event.code === "Delete" || event.code === "Backspace") {
-            areaDims.deleteAll();
-            isCreating = false;
-          } else if (event.code === "Escape" && isCreating) {
-            if (areaDims.cancel) areaDims.cancel();
-            else if (areaDims.endCreation) areaDims.endCreation();
-            isCreating = false;
-          } else if (event.code === "Enter" && isCreating) {
-            if (areaDims.endCreation) areaDims.endCreation();
-            else if (areaDims.finish) areaDims.finish();
-            isCreating = false;
-          }
-        } catch (error) {
-          console.error("Error handling area measurement keydown:", error);
-        }
-      };
-
-      container.addEventListener("dblclick", handleDoubleClick, true);
-      container.addEventListener("click", handleClick, true);
-      container.addEventListener("contextmenu", handleRightClick, true);
-      window.addEventListener("keydown", onKeyDown);
-
-      return () => {
-        if (clickTimeout) clearTimeout(clickTimeout);
-        areaDims.enabled = false;
-        areaDims.deleteAll();
-        container.removeEventListener("dblclick", handleDoubleClick, true);
-        container.removeEventListener("click", handleClick, true);
-        container.removeEventListener("contextmenu", handleRightClick, true);
-        window.removeEventListener("keydown", onKeyDown);
-      };
-    } catch (error) {
-      console.error("Error setting up area measurement:", error);
-      return () => {};
-    }
-  };
-
-  const setupEdgeMeasurement = (world, components, container) => {
-    try {
-      const edges = components.get(OBCF.EdgeMeasurement);
-      edges.world = world;
-      if (edges.config) edges.config.snapDistance = 25;
-      edges.enabled = true;
-      edgeRef.current = edges;
-
-      const handleDoubleClick = (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (edges.enabled && edges.world) {
-          try {
-            edges.create();
-          } catch (error) {
-            console.error("Error creating edge measurement:", error);
-          }
-        }
-      };
-
-      const onKeyDown = (event) => {
-        if (event.code === "Delete" || event.code === "Backspace") {
-          try {
-            edges.deleteAll();
-          } catch (error) {
-            console.error("Error deleting edges:", error);
-          }
-        }
-      };
-
-      container.addEventListener("dblclick", handleDoubleClick, true);
-      window.addEventListener("keydown", onKeyDown);
-
-      return () => {
-        edges.enabled = false;
-        edges.deleteAll();
-        container.removeEventListener("dblclick", handleDoubleClick, true);
-        window.removeEventListener("keydown", onKeyDown);
-      };
-    } catch (error) {
-      console.error("Error setting up edge measurement:", error);
-      return () => {};
-    }
-  };
-
-  const setupFaceMeasurement = (world, components, container) => {
-    try {
-      const faces = components.get(OBCF.FaceMeasurement);
-      faces.world = world;
-      if (faces.config) faces.config.snapDistance = 25;
-      faces.enabled = true;
-      faceRef.current = faces;
-
-      const handleDoubleClick = (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (faces.enabled && faces.world) {
-          try {
-            faces.create();
-          } catch (error) {
-            console.error("Error creating face measurement:", error);
-          }
-        }
-      };
-
-      const onKeyDown = (event) => {
-        if (event.code === "Delete" || event.code === "Backspace") {
-          try {
-            faces.deleteAll();
-          } catch (error) {
-            console.error("Error deleting faces:", error);
-          }
-        }
-      };
-
-      container.addEventListener("dblclick", handleDoubleClick, true);
-      window.addEventListener("keydown", onKeyDown);
-
-      return () => {
-        faces.enabled = false;
-        faces.deleteAll();
-        container.removeEventListener("dblclick", handleDoubleClick, true);
-        window.removeEventListener("keydown", onKeyDown);
-      };
-    } catch (error) {
-      console.error("Error setting up face measurement:", error);
-      return () => {};
-    }
-  };
-
-  const setupLengthMeasurement = (world, components, container) => {
-    try {
-      const lengths = components.get(OBCF.LengthMeasurement);
-      lengths.world = world;
-      if (lengths.config) lengths.config.snapDistance = 1;
-      lengths.enabled = true;
-      lengthRef.current = lengths;
-
-      const handleDoubleClick = (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (lengths.enabled && lengths.world) {
-          try {
-            lengths.create();
-          } catch (error) {
-            console.error("Error creating length measurement:", error);
-          }
-        }
-      };
-
-      const onKeyDown = (event) => {
-        if (event.code === "Delete" || event.code === "Backspace") {
-          try {
-            lengths.delete();
-          } catch (error) {
-            console.error("Error deleting lengths:", error);
-          }
-        }
-      };
-
-      container.addEventListener("dblclick", handleDoubleClick, true);
-      window.addEventListener("keydown", onKeyDown);
-
-      return () => {
-        lengths.enabled = false;
-        lengths.delete();
-        container.removeEventListener("dblclick", handleDoubleClick, true);
-        window.removeEventListener("keydown", onKeyDown);
-      };
-    } catch (error) {
-      console.error("Error setting up length measurement:", error);
-      return () => {};
-    }
-  };
-
-  const setupHighlighter = (world, components, container) => {
-    try {
-      const highlighter = components.get(OBCF.Highlighter);
-      highlighter.setup({ world });
-      highlighter.zoomToSelection = true;
-      highlighterRef.current = highlighter;
-
-      const outliner = components.get(OBCF.Outliner);
-      outliner.world = world;
-      outliner.enabled = true;
-
-      const handleClick = async (event) => {
-        try {
-          const result = await highlighter.highlight(event);
-          if (result && result.expressID) {
-            console.log("Selected element with Express ID:", result.expressID);
-            console.log("Element data:", result);
-          }
-        } catch (error) {
-          console.error("Error highlighting element:", error);
-        }
-      };
-
-      container.addEventListener("click", handleClick);
-
-      const outlineMaterial = new THREE.MeshBasicMaterial({
-        color: 0xbcf124,
-        transparent: true,
-        opacity: 0.5,
-      });
-
-      if (!outliner.selections.has("selection")) {
-        outliner.create("selection", outlineMaterial);
-      }
-
-      highlighter.events.select.onHighlight.add((data) => {
-        console.log("Highlighter data:", data);
-        outliner.clear("selection");
-        outliner.add("selection", data);
-      });
-
-      highlighter.events.select.onClear.add(() => {
-        outliner.clear("selection");
-      });
-
-      return () => {
-        container.removeEventListener("click", handleClick);
-        highlighter.enabled = false;
-        outliner.enabled = false;
-        outliner.clear("selection");
-        if (outlineMaterial?.dispose) outlineMaterial.dispose();
-      };
-    } catch (error) {
-      console.error("Error setting up highlighter:", error);
-      return () => {};
-    }
-  };
-
-  const setupFloorPlans = async (world, components, model) => {
-    try {
-      if (!model || !model.items || !model.uuid) {
-        console.error("Invalid model provided to setupFloorPlans:", model);
-        return () => {};
-      }
-      console.log("Setting up floor plans for model:", model.uuid, model);
-
-      const classifier = components.get(OBC.Classifier);
-      const storeys = classifier.find({ entities: ["IFCBUILDINGSTOREY"] });
-      console.log("Found IFCBUILDINGSTOREY entities:", storeys);
-      if (Object.keys(storeys).length === 0) {
-        console.warn(
-          "No IFCBUILDINGSTOREY entities found in the model. Floor plans may not be generated."
-        );
-      }
-
-      const plans = components.get(OBCF.Plans);
-      plans.world = world;
-      plansRef.current = plans;
-      console.log("Generating floor plans...");
-      await plans.generate(model);
-      console.log("Floor plans generated:", Array.from(plans.list.entries()));
-
-      const highlighter = components.get(OBCF.Highlighter);
-      highlighter.setup({ world });
-      console.log("Highlighter set up for floor plans.");
-
-      const cullers = components.get(OBC.Cullers);
-      const culler = cullers.create(world);
-      for (const fragment of model.items) {
-        if (fragment.mesh) {
-          culler.add(fragment.mesh);
-        }
-      }
-      culler.needsUpdate = true;
-      console.log("Culler set up with", model.items.length, "fragments.");
-
-      world.camera.controls.addEventListener("sleep", () => {
-        culler.needsUpdate = true;
-      });
-
-      classifier.byModel(model.uuid, model);
-      classifier.byEntity(model);
-      console.log("Classifier set up for model and entities.");
-
-      const modelItems = classifier.find({ models: [model.uuid] });
-      const thickItems = classifier.find({
-        entities: ["IFCWALLSTANDARDCASE", "IFCWALL"],
-      });
-      const thinItems = classifier.find({
-        entities: ["IFCDOOR", "IFCWINDOW", "IFCPLATE", "IFCMEMBER"],
-      });
-      console.log("Classifier results:", { modelItems, thickItems, thinItems });
-
-      const edges = components.get(OBCF.ClipEdges);
-
-      const grayFill = new THREE.MeshBasicMaterial({ color: "gray", side: 2 });
-      const blackLine = new THREE.LineBasicMaterial({ color: "black" });
-      const blackOutline = new THREE.MeshBasicMaterial({
-        color: "black",
-        opacity: 0.5,
-        side: 2,
-        transparent: true,
-      });
-
-      edges.styles.create(
-        "thick",
-        new Set(),
-        world,
-        blackLine,
-        grayFill,
-        blackOutline
-      );
-      if (!edges.styles.list.thick.meshes) {
-        edges.styles.list.thick.meshes = new Set();
-        console.warn("Initialized edges.styles.list.thick.meshes as new Set.");
-      }
-
-      for (const fragID in thickItems) {
-        const foundFrag = fragmentsRef.current.list.get(fragID);
-        if (!foundFrag) {
-          console.warn(`Fragment ${fragID} not found for thick items.`);
-          continue;
-        }
-        const { mesh } = foundFrag;
-        if (!mesh) {
-          console.warn(`Mesh not found for fragment ${fragID}.`);
-          continue;
-        }
-        edges.styles.list.thick.fragments[fragID] = new Set(thickItems[fragID]);
-        edges.styles.list.thick.meshes.add(mesh);
-      }
-      console.log(
-        "Thick style set up with",
-        edges.styles.list.thick.meshes.size,
-        "meshes."
-      );
-
-      edges.styles.create(
-        "thin",
-        new Set(),
-        world,
-        blackLine,
-        grayFill,
-        blackOutline
-      );
-      if (!edges.styles.list.thin.meshes) {
-        edges.styles.list.thin.meshes = new Set();
-        console.warn("Initialized edges.styles.list.thin.meshes as new Set.");
-      }
-
-      for (const fragID in thinItems) {
-        const foundFrag = fragmentsRef.current.list.get(fragID);
-        if (!foundFrag) {
-          console.warn(`Fragment ${fragID} not found for thin items.`);
-          continue;
-        }
-        const { mesh } = foundFrag;
-        if (!mesh) {
-          console.warn(`Mesh not found for fragment ${fragID}.`);
-          continue;
-        }
-        edges.styles.list.thin.fragments[fragID] = new Set(thinItems[fragID]);
-        edges.styles.list.thin.meshes.add(mesh);
-      }
-      console.log(
-        "Thin style set up with",
-        edges.styles.list.thin.meshes.size,
-        "meshes."
-      );
-
-      await edges.update(true);
-      console.log("Edges updated successfully.");
-
-      return () => {
-        console.log("Cleaning up floor plans...");
-        if (plans.list) {
-          plans.list.forEach((plan, id) => {
-            try {
-              plans.exitPlan(id);
-            } catch (error) {
-              console.error(`Error exiting plan ${id}:`, error);
-            }
-          });
-        }
-        if (edges.styles.list.thick.meshes) {
-          edges.styles.list.thick.meshes.clear();
-        }
-        if (edges.styles.list.thin.meshes) {
-          edges.styles.list.thin.meshes.clear();
-        }
-        try {
-          grayFill.dispose();
-          blackLine.dispose();
-          blackOutline.dispose();
-        } catch (error) {
-          console.error("Error disposing materials:", error);
-        }
-        try {
-          culler.dispose();
-        } catch (error) {
-          console.error("Error disposing culler:", error);
-        }
-        highlighter.enabled = false;
-        console.log("Floor plans cleanup complete.");
-      };
-    } catch (error) {
-      console.error("Error setting up floor plans:", error);
-      return () => {};
-    }
-  };
+  }, [model, activeTool]);
 
   useEffect(() => {
     if (!sceneDataRef.current) return;
 
-    if (cleanupRef.current) {
-      cleanupRef.current();
-      cleanupRef.current = null;
-    }
-
-    if (!activeTool) {
-      if (highlighterRef.current) {
-        highlighterRef.current.enabled = false;
-      }
-      return;
-    }
-
-    const { world, components, container } = sceneDataRef.current;
-    if (!world.renderer || !world.scene?.three) {
-      console.error("World is not properly initialized for tool setup");
-      return;
-    }
-
-    const currentModel = model || world.scene.three.getObjectByName("ifc_bim");
-
-    const setupTool = async () => {
-      if (activeTool === "angle") {
-        cleanupRef.current = setupAngleMeasurement(
-          world,
-          components,
-          container
-        );
-      } else if (activeTool === "line" && currentModel) {
-        cleanupRef.current = setupLineMeasurement(
-          world,
-          components,
-          currentModel
-        );
-      } else if (activeTool === "area") {
-        cleanupRef.current = setupAreaMeasurement(world, components, container);
-      } else if (activeTool === "edge") {
-        cleanupRef.current = setupEdgeMeasurement(world, components, container);
-      } else if (activeTool === "face") {
-        cleanupRef.current = setupFaceMeasurement(world, components, container);
-      } else if (activeTool === "length") {
-        cleanupRef.current = setupLengthMeasurement(
-          world,
-          components,
-          container
-        );
-      } else if (activeTool === "highlighter") {
-        cleanupRef.current = setupHighlighter(world, components, container);
-      } else if (activeTool === "modelinfo") {
-        setShowModelInfo(true);
-      } else if (activeTool === "floorplans" && currentModel) {
-        cleanupRef.current = await setupFloorPlans(
-          world,
-          components,
-          currentModel
-        );
-        setShowFloorPlans(true);
-      }
-    };
-
-    if (
-      currentModel ||
-      [
-        "angle",
-        "area",
-        "edge",
-        "face",
-        "length",
-        "highlighter",
-        "modelinfo",
-        "floorplans",
-      ].includes(activeTool)
-    ) {
-      setTimeout(setupTool, 500);
+    if (activeTool === "modelinfo") {
+      setShowModelInfo(true);
     } else {
-      const checkModel = () => {
-        const loadedModel = world.scene.three.getObjectByName("ifc_bim");
-        if (loadedModel) {
-          clearInterval(checkModelInterval);
-          setModel(loadedModel);
-          setTimeout(setupTool, 500);
-        }
-      };
-
-      const checkModelInterval = setInterval(checkModel, 100);
-
-      return () => {
-        clearInterval(checkModelInterval);
-        if (cleanupRef.current) {
-          cleanupRef.current();
-          cleanupRef.current = null;
-        }
-      };
-    }
-
-    return () => {
-      if (cleanupRef.current) {
-        cleanupRef.current();
-        cleanupRef.current = null;
-      }
       setShowModelInfo(false);
-      setShowFloorPlans(false);
-      if (highlighterRef.current) {
-        highlighterRef.current.enabled = false;
-      }
-    };
-  }, [activeTool, model, fragmentsModel]);
+    }
+  }, [activeTool]);
 
   return (
     <div className="viewer-container">
       <div className="controls">
-        <button
-          onClick={() => setActiveTool(activeTool === "angle" ? null : "angle")}
-          className={`control-button ${activeTool === "angle" ? "active" : ""}`}
-        >
-          <ArrowUpIcon className="icon" />
-          Angle
-        </button>
-        <button
-          onClick={() => setActiveTool(activeTool === "line" ? null : "line")}
-          className={`control-button ${activeTool === "line" ? "active" : ""}`}
-        >
-          <ArrowsUpDownIcon className="icon" />
-          Line
-        </button>
-        <button
-          onClick={() => setActiveTool(activeTool === "area" ? null : "area")}
-          className={`control-button ${activeTool === "area" ? "active" : ""}`}
-        >
-          <Square3Stack3DIcon className="icon" />
-          Area
-        </button>
-        <button
-          onClick={() => setActiveTool(activeTool === "edge" ? null : "edge")}
-          className={`control-button ${activeTool === "edge" ? "active" : ""}`}
-        >
-          <Square2StackIcon className="icon" />
-          Edge
-        </button>
-        <button
-          onClick={() => setActiveTool(activeTool === "face" ? null : "face")}
-          className={`control-button ${activeTool === "face" ? "active" : ""}`}
-        >
-          <DocumentMagnifyingGlassIcon className="icon" />
-          Face
-        </button>
-        <button
-          onClick={() =>
-            setActiveTool(activeTool === "length" ? null : "length")
-          }
-          className={`control-button ${
-            activeTool === "length" ? "active" : ""
-          }`}
-        >
-          <ArrowTrendingUpIcon className="icon" />
-          Length
-        </button>
-        <button
-          onClick={() =>
-            setActiveTool(activeTool === "highlighter" ? null : "highlighter")
-          }
-          className={`control-button ${
-            activeTool === "highlighter" ? "active" : ""
-          }`}
-        >
-          <ArrowsPointingOutIcon className="icon" />
-          Highlighter
-        </button>
         <button
           onClick={() =>
             setActiveTool(activeTool === "modelinfo" ? null : "modelinfo")
@@ -1103,100 +337,20 @@ const IfcViewer = ({ ifcFile }) => {
           <InformationCircleIcon className="icon" />
           Model Info
         </button>
-        <button
-          onClick={() =>
-            setActiveTool(activeTool === "floorplans" ? null : "floorplans")
-          }
-          className={`control-button ${
-            activeTool === "floorplans" ? "active" : ""
-          }`}
-        >
-          <MapIcon className="icon" />
-          Floor Plans
-        </button>
       </div>
       <div className="scene-wrapper">
         <div id="scene-container" className="scene-container">
-          {activeTool && (
+          {activeTool === "modelinfo" && (
             <div className="tool-instructions">
-              {activeTool === "angle" && (
-                <div>
-                  <div className="font-bold">Angle Tool Active</div>
-                  <div>• Double-click to start angle measurement</div>
-                  <div>• Click 3 points to complete</div>
-                  <div>• DEL to delete all angles</div>
-                </div>
-              )}
-              {activeTool === "area" && (
-                <div>
-                  <div className="font-bold">Area Tool Active</div>
-                  <div>• Double-click to start area measurement</div>
-                  <div>• Single-click to add points</div>
-                  <div>• Right-click or Enter to finish area</div>
-                  <div>• ESC to cancel, DEL to delete all</div>
-                </div>
-              )}
-              {activeTool === "line" && (
-                <div>
-                  <div className="font-bold">Line Tool Active</div>
-                  <div>• Move mouse over model faces</div>
-                </div>
-              )}
-              {activeTool === "edge" && (
-                <div>
-                  <div className="font-bold">Edge Tool Active</div>
-                  <div>• Double-click to create edge measurement</div>
-                  <div>• DEL to delete all edges</div>
-                </div>
-              )}
-              {activeTool === "face" && (
-                <div>
-                  <div className="font-bold">Face Tool Active</div>
-                  <div>• Double-click to create face measurement</div>
-                  <div>• DEL to delete all faces</div>
-                </div>
-              )}
-              {activeTool === "length" && (
-                <div>
-                  <div className="font-bold">Length Tool Active</div>
-                  <div>• Double-click to create length measurement</div>
-                  <div>• DEL or Backspace to delete all lengths</div>
-                </div>
-              )}
-              {activeTool === "highlighter" && (
-                <div>
-                  <div className="font-bold">Highlighter Active</div>
-                  <div>• Hover to highlight elements</div>
-                  <div>• Click to select with outline</div>
-                  <div>• Click elsewhere to clear selection</div>
-                </div>
-              )}
-              {activeTool === "modelinfo" && (
-                <div>
-                  <div className="font-bold">Model Info Active</div>
-                  <div>• Click an element to view its name</div>
-                  <div>• Click elsewhere to clear selection</div>
-                </div>
-              )}
-              {activeTool === "floorplans" && (
-                <div>
-                  <div className="font-bold">Floor Plans Active</div>
-                  <div>• Select a floor plan from the panel</div>
-                  <div>• Click a plan to navigate to it</div>
-                </div>
-              )}
+              <div className="font-bold">Model Info Active</div>
+              <div>• Click an element to view its name</div>
+              <div>• Click elsewhere to clear selection</div>
             </div>
           )}
         </div>
-        {showModelInfo && fragmentsModel && (
+        {showModelInfo && model && (
           <ModelInfo
             selectedElement={selectedElement}
-            onExit={() => setActiveTool(null)}
-          />
-        )}
-        {showFloorPlans && plansRef.current && (
-          <FloorPlans
-            plans={plansRef.current}
             onExit={() => setActiveTool(null)}
           />
         )}
