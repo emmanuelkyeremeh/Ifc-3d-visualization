@@ -13,8 +13,10 @@ import {
   ArrowTrendingUpIcon,
   ArrowsPointingOutIcon,
   InformationCircleIcon,
+  MapIcon,
 } from "@heroicons/react/24/outline";
 import ModelInfo from "./ModelInfo";
+import FloorPlans from "./FloorPlans";
 import "../styles/IfcViewer.css";
 
 const IfcViewer = ({ ifcFile }) => {
@@ -28,8 +30,10 @@ const IfcViewer = ({ ifcFile }) => {
   const highlighterRef = useRef(null);
   const fragmentsRef = useRef(null);
   const cleanupRef = useRef(null);
+  const plansRef = useRef(null);
   const [activeTool, setActiveTool] = useState(null);
   const [showModelInfo, setShowModelInfo] = useState(false);
+  const [showFloorPlans, setShowFloorPlans] = useState(false);
   const [model, setModel] = useState(null);
   const [fragmentsModel, setFragmentsModel] = useState(null);
   const [selectedElement, setSelectedElement] = useState(null);
@@ -261,13 +265,12 @@ const IfcViewer = ({ ifcFile }) => {
       if (!localId || !fragmentsModel) return null;
       try {
         const [data] = await fragmentsModel.getItemsData([localId], {
-          attributesDefault: true, // Get all attributes
+          attributesDefault: true,
           relations: {
             IsDefinedBy: { attributes: true, relations: true },
             DefinesOccurrence: { attributes: false, relations: false },
           },
         });
-        // Format property sets for better readability
         const formatPsets = (rawPsets) => {
           if (!rawPsets || !Array.isArray(rawPsets)) return {};
           const result = {};
@@ -307,7 +310,6 @@ const IfcViewer = ({ ifcFile }) => {
     const handleClick = async (event) => {
       if (activeTool !== "modelinfo" || !fragmentsModel) return;
       const mouse = new THREE.Vector2();
-      // Calculate mouse coordinates as per the tutorial
       mouse.x = event.clientX;
       mouse.y = event.clientY;
       try {
@@ -343,7 +345,7 @@ const IfcViewer = ({ ifcFile }) => {
 
     return () => {
       container.removeEventListener("click", handleClick);
-      resetHighlight(); // Clear highlight on cleanup
+      resetHighlight();
       localId = null;
       setSelectedElement(null);
     };
@@ -747,6 +749,179 @@ const IfcViewer = ({ ifcFile }) => {
     }
   };
 
+  const setupFloorPlans = async (world, components, model) => {
+    try {
+      if (!model || !model.items || !model.uuid) {
+        console.error("Invalid model provided to setupFloorPlans:", model);
+        return () => {};
+      }
+      console.log("Setting up floor plans for model:", model.uuid, model);
+
+      const classifier = components.get(OBC.Classifier);
+      const storeys = classifier.find({ entities: ["IFCBUILDINGSTOREY"] });
+      console.log("Found IFCBUILDINGSTOREY entities:", storeys);
+      if (Object.keys(storeys).length === 0) {
+        console.warn(
+          "No IFCBUILDINGSTOREY entities found in the model. Floor plans may not be generated."
+        );
+      }
+
+      const plans = components.get(OBCF.Plans);
+      plans.world = world;
+      plansRef.current = plans;
+      console.log("Generating floor plans...");
+      await plans.generate(model);
+      console.log("Floor plans generated:", Array.from(plans.list.entries()));
+
+      const highlighter = components.get(OBCF.Highlighter);
+      highlighter.setup({ world });
+      console.log("Highlighter set up for floor plans.");
+
+      const cullers = components.get(OBC.Cullers);
+      const culler = cullers.create(world);
+      for (const fragment of model.items) {
+        if (fragment.mesh) {
+          culler.add(fragment.mesh);
+        }
+      }
+      culler.needsUpdate = true;
+      console.log("Culler set up with", model.items.length, "fragments.");
+
+      world.camera.controls.addEventListener("sleep", () => {
+        culler.needsUpdate = true;
+      });
+
+      classifier.byModel(model.uuid, model);
+      classifier.byEntity(model);
+      console.log("Classifier set up for model and entities.");
+
+      const modelItems = classifier.find({ models: [model.uuid] });
+      const thickItems = classifier.find({
+        entities: ["IFCWALLSTANDARDCASE", "IFCWALL"],
+      });
+      const thinItems = classifier.find({
+        entities: ["IFCDOOR", "IFCWINDOW", "IFCPLATE", "IFCMEMBER"],
+      });
+      console.log("Classifier results:", { modelItems, thickItems, thinItems });
+
+      const edges = components.get(OBCF.ClipEdges);
+
+      const grayFill = new THREE.MeshBasicMaterial({ color: "gray", side: 2 });
+      const blackLine = new THREE.LineBasicMaterial({ color: "black" });
+      const blackOutline = new THREE.MeshBasicMaterial({
+        color: "black",
+        opacity: 0.5,
+        side: 2,
+        transparent: true,
+      });
+
+      edges.styles.create(
+        "thick",
+        new Set(),
+        world,
+        blackLine,
+        grayFill,
+        blackOutline
+      );
+      if (!edges.styles.list.thick.meshes) {
+        edges.styles.list.thick.meshes = new Set();
+        console.warn("Initialized edges.styles.list.thick.meshes as new Set.");
+      }
+
+      for (const fragID in thickItems) {
+        const foundFrag = fragmentsRef.current.list.get(fragID);
+        if (!foundFrag) {
+          console.warn(`Fragment ${fragID} not found for thick items.`);
+          continue;
+        }
+        const { mesh } = foundFrag;
+        if (!mesh) {
+          console.warn(`Mesh not found for fragment ${fragID}.`);
+          continue;
+        }
+        edges.styles.list.thick.fragments[fragID] = new Set(thickItems[fragID]);
+        edges.styles.list.thick.meshes.add(mesh);
+      }
+      console.log(
+        "Thick style set up with",
+        edges.styles.list.thick.meshes.size,
+        "meshes."
+      );
+
+      edges.styles.create(
+        "thin",
+        new Set(),
+        world,
+        blackLine,
+        grayFill,
+        blackOutline
+      );
+      if (!edges.styles.list.thin.meshes) {
+        edges.styles.list.thin.meshes = new Set();
+        console.warn("Initialized edges.styles.list.thin.meshes as new Set.");
+      }
+
+      for (const fragID in thinItems) {
+        const foundFrag = fragmentsRef.current.list.get(fragID);
+        if (!foundFrag) {
+          console.warn(`Fragment ${fragID} not found for thin items.`);
+          continue;
+        }
+        const { mesh } = foundFrag;
+        if (!mesh) {
+          console.warn(`Mesh not found for fragment ${fragID}.`);
+          continue;
+        }
+        edges.styles.list.thin.fragments[fragID] = new Set(thinItems[fragID]);
+        edges.styles.list.thin.meshes.add(mesh);
+      }
+      console.log(
+        "Thin style set up with",
+        edges.styles.list.thin.meshes.size,
+        "meshes."
+      );
+
+      await edges.update(true);
+      console.log("Edges updated successfully.");
+
+      return () => {
+        console.log("Cleaning up floor plans...");
+        if (plans.list) {
+          plans.list.forEach((plan, id) => {
+            try {
+              plans.exitPlan(id);
+            } catch (error) {
+              console.error(`Error exiting plan ${id}:`, error);
+            }
+          });
+        }
+        if (edges.styles.list.thick.meshes) {
+          edges.styles.list.thick.meshes.clear();
+        }
+        if (edges.styles.list.thin.meshes) {
+          edges.styles.list.thin.meshes.clear();
+        }
+        try {
+          grayFill.dispose();
+          blackLine.dispose();
+          blackOutline.dispose();
+        } catch (error) {
+          console.error("Error disposing materials:", error);
+        }
+        try {
+          culler.dispose();
+        } catch (error) {
+          console.error("Error disposing culler:", error);
+        }
+        highlighter.enabled = false;
+        console.log("Floor plans cleanup complete.");
+      };
+    } catch (error) {
+      console.error("Error setting up floor plans:", error);
+      return () => {};
+    }
+  };
+
   useEffect(() => {
     if (!sceneDataRef.current) return;
 
@@ -770,7 +945,7 @@ const IfcViewer = ({ ifcFile }) => {
 
     const currentModel = model || world.scene.three.getObjectByName("ifc_bim");
 
-    const setupTool = () => {
+    const setupTool = async () => {
       if (activeTool === "angle") {
         cleanupRef.current = setupAngleMeasurement(
           world,
@@ -799,6 +974,13 @@ const IfcViewer = ({ ifcFile }) => {
         cleanupRef.current = setupHighlighter(world, components, container);
       } else if (activeTool === "modelinfo") {
         setShowModelInfo(true);
+      } else if (activeTool === "floorplans" && currentModel) {
+        cleanupRef.current = await setupFloorPlans(
+          world,
+          components,
+          currentModel
+        );
+        setShowFloorPlans(true);
       }
     };
 
@@ -812,6 +994,7 @@ const IfcViewer = ({ ifcFile }) => {
         "length",
         "highlighter",
         "modelinfo",
+        "floorplans",
       ].includes(activeTool)
     ) {
       setTimeout(setupTool, 500);
@@ -842,6 +1025,7 @@ const IfcViewer = ({ ifcFile }) => {
         cleanupRef.current = null;
       }
       setShowModelInfo(false);
+      setShowFloorPlans(false);
       if (highlighterRef.current) {
         highlighterRef.current.enabled = false;
       }
@@ -919,6 +1103,17 @@ const IfcViewer = ({ ifcFile }) => {
           <InformationCircleIcon className="icon" />
           Model Info
         </button>
+        <button
+          onClick={() =>
+            setActiveTool(activeTool === "floorplans" ? null : "floorplans")
+          }
+          className={`control-button ${
+            activeTool === "floorplans" ? "active" : ""
+          }`}
+        >
+          <MapIcon className="icon" />
+          Floor Plans
+        </button>
       </div>
       <div className="scene-wrapper">
         <div id="scene-container" className="scene-container">
@@ -983,12 +1178,25 @@ const IfcViewer = ({ ifcFile }) => {
                   <div>• Click elsewhere to clear selection</div>
                 </div>
               )}
+              {activeTool === "floorplans" && (
+                <div>
+                  <div className="font-bold">Floor Plans Active</div>
+                  <div>• Select a floor plan from the panel</div>
+                  <div>• Click a plan to navigate to it</div>
+                </div>
+              )}
             </div>
           )}
         </div>
         {showModelInfo && fragmentsModel && (
           <ModelInfo
             selectedElement={selectedElement}
+            onExit={() => setActiveTool(null)}
+          />
+        )}
+        {showFloorPlans && plansRef.current && (
+          <FloorPlans
+            plans={plansRef.current}
             onExit={() => setActiveTool(null)}
           />
         )}
