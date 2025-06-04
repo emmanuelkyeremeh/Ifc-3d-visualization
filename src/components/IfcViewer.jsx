@@ -3,7 +3,6 @@ import * as WEBIFC from "web-ifc";
 import * as OBC from "@thatopen/components";
 import * as OBCF from "@thatopen/components-front";
 import * as THREE from "three";
-import * as FRAGS from "@thatopen/fragments";
 import {
   ArrowUpIcon,
   ArrowsUpDownIcon,
@@ -15,8 +14,6 @@ import {
   MapIcon,
   InformationCircleIcon,
 } from "@heroicons/react/24/outline";
-import FloorPlanControls from "./FloorPlanControls";
-import ModelInfo from "./ModelInfo";
 import "../styles/IfcViewer.css";
 
 const IfcViewer = ({ ifcFile }) => {
@@ -28,17 +25,10 @@ const IfcViewer = ({ ifcFile }) => {
   const faceRef = useRef(null);
   const lengthRef = useRef(null);
   const highlighterRef = useRef(null);
-  const plansRef = useRef(null);
-  const classifierRef = useRef(null);
-  const edgesRef = useRef(null);
-  const cullerRef = useRef(null);
-  const fragmentsRef = useRef(null);
   const cleanupRef = useRef(null);
   const [activeTool, setActiveTool] = useState(null);
-  const [showFloorPlanControls, setShowFloorPlanControls] = useState(false);
   const [showModelInfo, setShowModelInfo] = useState(false);
   const [model, setModel] = useState(null);
-  const [fragmentsModel, setFragmentsModel] = useState(null);
 
   useEffect(() => {
     const createScene = async () => {
@@ -76,9 +66,6 @@ const IfcViewer = ({ ifcFile }) => {
         grid.three
       );
 
-      const fragments = components.get(OBC.FragmentsManager);
-      fragmentsRef.current = fragments;
-
       const fragmentIfcLoader = components.get(OBC.IfcLoader);
       try {
         await fragmentIfcLoader.setup();
@@ -99,46 +86,11 @@ const IfcViewer = ({ ifcFile }) => {
 
       fragmentIfcLoader.settings.webIfc.COORDINATE_TO_ORIGIN = true;
 
-      // Initialize FragmentsModels for ModelInfo
-      const workerUrl =
-        "https://thatopen.github.io/engine_fragment/resources/worker.mjs";
-      const fragmentsModels = new FRAGS.FragmentsModels(workerUrl);
-
-      fragmentsModels.models.list.onItemSet.add(({ value: loadedModel }) => {
-        loadedModel.useCamera(world.camera.three);
-        world.scene.three.add(loadedModel.object);
-        world.meshes.add(loadedModel.object);
-        fragmentsModels.update(true);
-      });
-
-      world.camera.controls.addEventListener("rest", () =>
-        fragmentsModels.update(true)
-      );
-      world.camera.controls.addEventListener("update", () =>
-        fragmentsModels.update()
-      );
-
-      const plans = components.get(OBCF.Plans);
-      plans.world = world;
-      plansRef.current = plans;
-
-      const classifier = components.get(OBC.Classifier);
-      classifierRef.current = classifier;
-
-      const edges = components.get(OBCF.ClipEdges);
-      edgesRef.current = edges;
-
-      const cullers = components.get(OBC.Cullers);
-      const culler = cullers.create(world);
-      cullerRef.current = culler;
-
       return {
         world,
-        fragments,
         fragmentIfcLoader,
         components,
         container,
-        fragmentsModels,
       };
     };
 
@@ -153,13 +105,7 @@ const IfcViewer = ({ ifcFile }) => {
         }
         sceneDataRef.current = sceneData;
 
-        const { world, fragments, fragmentIfcLoader } = sceneData;
-
-        // Initialize FragmentsModels first
-        const workerUrl =
-          "https://thatopen.github.io/engine_fragment/resources/worker.mjs";
-        const fragmentsModels = new FRAGS.FragmentsModels(workerUrl);
-        sceneDataRef.current.fragmentsModels = fragmentsModels;
+        const { world, fragmentIfcLoader } = sceneData;
 
         // Load IFC using OBC.IfcLoader
         const loadedModel = await fragmentIfcLoader.load(buffer);
@@ -167,45 +113,6 @@ const IfcViewer = ({ ifcFile }) => {
         world.scene.three.add(loadedModel);
         world.meshes.add(loadedModel);
         setModel(loadedModel);
-
-        // Wait for fragments to be processed
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-
-        // Get the fragment data
-        const modelData = fragments.list.get(loadedModel.uuid);
-        if (!modelData) {
-          console.error("No fragment data found for model");
-          return;
-        }
-
-        try {
-          // Load the fragments model
-          const fragmentsModel = await fragmentsModels.load(modelData.data, {
-            modelId: "ifc_bim",
-          });
-
-          // Set up the model
-          fragmentsModel.useCamera(world.camera.three);
-          world.scene.three.add(fragmentsModel.object);
-          world.meshes.add(fragmentsModel.object);
-
-          // Update fragments on camera movement
-          world.camera.controls.addEventListener("rest", () =>
-            fragmentsModels.update(true)
-          );
-          world.camera.controls.addEventListener("update", () =>
-            fragmentsModels.update()
-          );
-
-          // Store the fragments model
-          setFragmentsModel(fragmentsModel);
-          console.log(
-            "Fragments model created and added to scene:",
-            fragmentsModel
-          );
-        } catch (error) {
-          console.error("Error creating fragments model:", error);
-        }
       } catch (error) {
         console.error("Error loading IFC file:", error);
       }
@@ -217,9 +124,8 @@ const IfcViewer = ({ ifcFile }) => {
 
     return () => {
       if (sceneDataRef.current) {
-        const { components, world, fragmentsModels } = sceneDataRef.current;
+        const { components, world } = sceneDataRef.current;
         components.dispose();
-        fragmentsModels?.dispose();
         world.scene.three.traverse((object) => {
           if (object.geometry) object.geometry.dispose();
           if (object.material) object.material.dispose();
@@ -229,101 +135,6 @@ const IfcViewer = ({ ifcFile }) => {
       }
     };
   }, [ifcFile]);
-
-  useEffect(() => {
-    if (!sceneDataRef.current || !model) return;
-
-    const { world, fragments } = sceneDataRef.current;
-    if (!world.renderer || !world.scene) {
-      console.error("World is not properly initialized");
-      return;
-    }
-
-    const { plans, classifier, edges, culler } = {
-      plans: plansRef.current,
-      classifier: classifierRef.current,
-      edges: edgesRef.current,
-      culler: cullerRef.current,
-    };
-
-    const setupFloorPlan = async () => {
-      try {
-        await plans.generate(model);
-
-        classifier.byModel(model.uuid, model);
-        classifier.byEntity(model);
-
-        const modelItems = classifier.find({ models: [model.uuid] });
-        const thickItems = classifier.find({
-          entities: ["IFCWALLSTANDARDCASE", "IFCWALL"],
-        });
-        const thinItems = classifier.find({
-          entities: ["IFCDOOR", "IFCWINDOW", "IFCPLATE", "IFCMEMBER"],
-        });
-
-        const grayFill = new THREE.MeshBasicMaterial({
-          color: "gray",
-          side: THREE.DoubleSide,
-        });
-        const blackLine = new THREE.LineBasicMaterial({ color: "black" });
-        const blackOutline = new THREE.MeshBasicMaterial({
-          color: "black",
-          opacity: 0.5,
-          side: THREE.DoubleSide,
-          transparent: true,
-        });
-
-        if (!edges.styles.list.thick) {
-          edges.styles.create(
-            "thick",
-            new Set(),
-            world,
-            blackLine,
-            grayFill,
-            blackOutline
-          );
-        }
-
-        for (const fragID in thickItems) {
-          const foundFrag = fragments.list.get(fragID);
-          if (!foundFrag) continue;
-          const { mesh } = foundFrag;
-          edges.styles.list.thick.fragments[fragID] = new Set(
-            thickItems[fragID]
-          );
-          edges.styles.list.thick.meshes.add(mesh);
-        }
-
-        if (!edges.styles.list.thin) {
-          edges.styles.create("thin", new Set(), world);
-        }
-
-        for (const fragID of thinItems) {
-          const foundFrag = fragments.list.get(fragID);
-          if (!foundFrag) continue;
-          const { mesh } = foundFrag;
-          edges.styles.list.thin.fragments[fragID] = new Set(thinItems[fragID]);
-          edges.styles.list.thin.meshes.add(mesh);
-        }
-
-        await edges.update(true);
-
-        for (const fragment of model.items) {
-          culler.add(fragment.mesh);
-        }
-
-        culler.needsUpdate = true;
-
-        world.camera.controls.addEventListener("sleep", () => {
-          culler.needsUpdate = true;
-        });
-      } catch (error) {
-        console.error("Error setting up floor plan:", error);
-      }
-    };
-
-    setupFloorPlan();
-  }, [model]);
 
   const setupAngleMeasurement = (world, components, container) => {
     try {
@@ -712,25 +523,14 @@ const IfcViewer = ({ ifcFile }) => {
         );
       } else if (activeTool === "highlighter") {
         cleanupRef.current = setupHighlighter(world, components, container);
-      } else if (activeTool === "floorplan") {
-        setShowFloorPlanControls(true);
-      } else if (activeTool === "modelinfo") {
-        setShowModelInfo(true);
       }
     };
 
     if (
       currentModel ||
-      [
-        "angle",
-        "area",
-        "edge",
-        "face",
-        "length",
-        "highlighter",
-        "floorplan",
-        "modelinfo",
-      ].includes(activeTool)
+      ["angle", "area", "edge", "face", "length", "highlighter"].includes(
+        activeTool
+      )
     ) {
       setTimeout(setupTool, 500);
     } else {
@@ -759,8 +559,6 @@ const IfcViewer = ({ ifcFile }) => {
         cleanupRef.current();
         cleanupRef.current = null;
       }
-      setShowFloorPlanControls(false);
-      setShowModelInfo(false);
       if (highlighterRef.current) {
         highlighterRef.current.enabled = false;
       }
@@ -827,28 +625,6 @@ const IfcViewer = ({ ifcFile }) => {
           <ArrowsPointingOutIcon className="icon" />
           Highlighter
         </button>
-        <button
-          onClick={() =>
-            setActiveTool(activeTool === "floorplan" ? null : "floorplan")
-          }
-          className={`control-button ${
-            activeTool === "floorplan" ? "active" : ""
-          }`}
-        >
-          <MapIcon className="icon" />
-          Floor Plan
-        </button>
-        <button
-          onClick={() =>
-            setActiveTool(activeTool === "modelinfo" ? null : "modelinfo")
-          }
-          className={`control-button ${
-            activeTool === "modelinfo" ? "active" : ""
-          }`}
-        >
-          <InformationCircleIcon className="icon" />
-          Model Info
-        </button>
       </div>
       <div className="scene-wrapper">
         <div id="scene-container" className="scene-container">
@@ -911,25 +687,6 @@ const IfcViewer = ({ ifcFile }) => {
               </div>
             )}
         </div>
-        {showFloorPlanControls && model && (
-          <FloorPlanControls
-            plans={plansRef.current}
-            world={sceneDataRef.current?.world}
-            model={model}
-            classifier={classifierRef.current}
-            highlighter={highlighterRef.current}
-            culler={cullerRef.current}
-            onExit={() => setActiveTool(null)}
-          />
-        )}
-        {showModelInfo && fragmentsModel && (
-          <ModelInfo
-            model={fragmentsModel}
-            world={sceneDataRef.current?.world}
-            fragments={sceneDataRef.current?.fragmentsModels}
-            onExit={() => setActiveTool(null)}
-          />
-        )}
       </div>
     </div>
   );
