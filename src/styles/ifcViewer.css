@@ -1,100 +1,219 @@
+/* Import Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+
+/* Reset and base styles */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+}
+
+html, body {
+  overflow-x: hidden;
+  width: 100%;
+  height: 100%;
+}
+
 .viewer-container {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
   width: 100%;
   height: 100vh;
+  position: relative;
+  background-color: #1a1a1a;
   overflow: hidden;
 }
 
 .scene-wrapper {
-  position: relative;
-  display: flex;
-  flex: 1;
   width: 100%;
   height: 100%;
+  position: relative;
 }
 
 .scene-container {
   width: 100%;
   height: 100%;
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
 }
 
-.menu-toggle-button {
-  position: absolute;
-  top: 1rem;
-  right: 1rem;
-  background-color: #ffffff;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  padding: 0.5rem;
-  cursor: pointer;
-  z-index: 1000;
-  transition: background-color 0.3s ease;
-}
-
-.menu-toggle-button:hover {
-  background-color: #f3f4f6;
-}
-
-.menu-toggle-button .icon {
-  font-size: 1.5rem;
-}
-
+/* Control Panel Styles */
 .control-panel {
   position: absolute;
-  top: 1rem;
-  left: 1rem;
-  background: rgba(255, 255, 255, 0.95);
-  padding: 1rem;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  top: 20px;
+  right: 20px;
+  width: 300px;
+  max-height: calc(100vh - 40px);
+  background-color: rgba(28, 28, 28, 0.75);
+  backdrop-filter: blur(8px);
+  border-radius: 12px;
+  padding: 20px;
+  color: #ffffff;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+  overflow-y: auto;
+  transition: all 0.3s ease;
+  transform: translateX(120%);
+  opacity: 0;
   z-index: 1000;
-  max-width: 300px;
-  display: none;
 }
 
 .control-panel.visible {
-  display: block;
+  transform: translateX(0);
+  opacity: 1;
+}
+
+/* Customize scrollbar */
+.control-panel::-webkit-scrollbar {
+  width: 8px;
+}
+
+.control-panel::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+.control-panel::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+.control-panel::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
 }
 
 .panel-section {
-  margin-bottom: 1rem;
+  margin-bottom: 24px;
 }
 
 .panel-section h3 {
-  font-size: 1.1rem;
+  font-size: 16px;
   font-weight: 600;
-  margin-bottom: 0.5rem;
-  color: #374151;
+  margin-bottom: 16px;
+  color: #ffffff;
+  letter-spacing: 0.5px;
 }
 
 .checkbox-container {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background-color: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  transition: background-color 0.2s ease;
 }
 
-.checkbox-container input {
-  width: 1rem;
-  height: 1rem;
+.checkbox-container:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.checkbox-container input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  margin-right: 12px;
+  position: relative;
   cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.checkbox-container input[type="checkbox"]:checked {
+  background-color: #4CAF50;
+  border-color: #4CAF50;
+}
+
+.checkbox-container input[type="checkbox"]:checked::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  width: 4px;
+  height: 8px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
 }
 
 .checkbox-container label {
-  font-size: 0.9rem;
-  color: #374151;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  user-select: none;
 }
 
-@media (min-width: 769px) {
+/* Menu Toggle Button */
+.menu-toggle-button {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background-color: rgba(28, 28, 28, 0.75);
+  backdrop-filter: blur(8px);
+  border: none;
+  color: white;
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s ease;
+  z-index: 1001;
+}
+
+.menu-toggle-button:hover {
+  background-color: rgba(40, 40, 40, 0.85);
+  transform: scale(1.05);
+}
+
+.menu-toggle-button .icon {
+  font-size: 20px;
+}
+
+/* Selected Element Info */
+.selected-element-info {
+  background-color: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 16px;
+}
+
+.selected-element-info p {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.9);
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+
+/* Mobile Responsiveness */
+@media (max-width: 768px) {
   .control-panel {
-    display: block;
+    width: 100%;
+    max-width: 300px;
+    right: 0;
+    top: 0;
+    height: 100vh;
+    border-radius: 0;
+    transform: translateX(100%);
   }
+
   .menu-toggle-button {
-    display: none !important;
+    display: flex;
   }
+}
+
+/* Loading State */
+.loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: white;
+  font-size: 16px;
+  background-color: rgba(28, 28, 28, 0.75);
+  padding: 16px 24px;
+  border-radius: 8px;
+  backdrop-filter: blur(8px);
 }

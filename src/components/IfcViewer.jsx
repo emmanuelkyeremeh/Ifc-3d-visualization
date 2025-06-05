@@ -332,6 +332,124 @@ const IfcViewer = ({ ifcFile, guid }) => {
               }
             }
 
+            // Make elements from other storeys transparent
+            if (sceneDataRef.current?.classifier?.list?.spatialStructures) {
+              const { classifier, indexer, fragments } = sceneDataRef.current;
+              const spatialStructures = classifier.list.spatialStructures;
+
+              console.log(
+                "Available spatial structures:",
+                Object.keys(spatialStructures)
+              );
+
+              // Find which story contains our element
+              let targetStoryId = null;
+              let targetStoryName = null;
+              for (const [storyName, storyData] of Object.entries(
+                spatialStructures
+              )) {
+                if (storyData.id !== null) {
+                  const storyElements = indexer.getEntityChildren(
+                    model,
+                    storyData.id
+                  );
+                  console.log(
+                    `Checking story ${storyName} with ID ${storyData.id}`
+                  );
+                  console.log(`Story elements:`, storyElements);
+                  if (storyElements.has(localId)) {
+                    targetStoryId = storyData.id;
+                    targetStoryName = storyName;
+                    console.log(
+                      `Found target story: ${storyName} with ID ${storyData.id}`
+                    );
+                    break;
+                  }
+                }
+              }
+
+              // Make elements from other storeys transparent
+              if (targetStoryId !== null) {
+                console.log(
+                  `Making elements from other stories transparent. Target story: ${targetStoryName}`
+                );
+                for (const [storyName, storyData] of Object.entries(
+                  spatialStructures
+                )) {
+                  if (storyData.id !== null && storyData.id !== targetStoryId) {
+                    console.log(`Processing non-target story: ${storyName}`);
+                    const storyElements = indexer.getEntityChildren(
+                      model,
+                      storyData.id
+                    );
+                    const fragMap = model.getFragmentMap(storyElements);
+                    console.log(
+                      `Found ${
+                        Object.keys(fragMap).length
+                      } fragments in story ${storyName}`
+                    );
+
+                    for (const [fragmentID, localIDs] of Object.entries(
+                      fragMap
+                    )) {
+                      const fragment = model.children.find(
+                        (child) => child.uuid === fragmentID
+                      );
+                      if (fragment) {
+                        // Store original material if not already stored
+                        if (!fragment.userData.originalMaterial) {
+                          fragment.userData.originalMaterial =
+                            fragment.material;
+                        }
+
+                        // Create transparent material with more aggressive transparency
+                        const transparentMaterial = new THREE.MeshBasicMaterial(
+                          {
+                            color: 0x808080, // Gray color
+                            transparent: true,
+                            opacity: 0.05, // Much more transparent (5% opacity)
+                            side: THREE.DoubleSide,
+                            depthWrite: false,
+                            depthTest: false, // Disable depth testing to ensure transparency
+                          }
+                        );
+
+                        // Apply transparent material
+                        fragment.material = transparentMaterial;
+
+                        // Also make the fragment itself more transparent
+                        fragment.visible = true;
+                        fragment.traverse((child) => {
+                          if (child.isMesh) {
+                            child.visible = true;
+                            if (child.material) {
+                              if (Array.isArray(child.material)) {
+                                child.material.forEach((mat) => {
+                                  if (mat) {
+                                    mat.transparent = true;
+                                    mat.opacity = 0.05;
+                                    mat.depthTest = false;
+                                    mat.depthWrite = false;
+                                  }
+                                });
+                              } else {
+                                child.material.transparent = true;
+                                child.material.opacity = 0.05;
+                                child.material.depthTest = false;
+                                child.material.depthWrite = false;
+                              }
+                            }
+                          }
+                        });
+                      }
+                    }
+                  }
+                }
+              } else {
+                console.log("Could not find target story for element");
+              }
+            }
+
             // Zoom to the highlighted element using the camera
             if (sceneDataRef.current?.world?.camera) {
               const box = new THREE.Box3().setFromObject(fragmentMesh);
@@ -390,16 +508,7 @@ const IfcViewer = ({ ifcFile, guid }) => {
       for (const [_id, model] of fragments.groups) {
         const foundIDs = indexer.getEntityChildren(model, found.id);
         const fragMap = model.getFragmentMap(foundIDs);
-
-        // Instead of using hider.set, we'll directly modify the visibility
-        for (const [fragmentID, localIDs] of Object.entries(fragMap)) {
-          const fragment = model.children.find(
-            (child) => child.uuid === fragmentID
-          );
-          if (fragment) {
-            fragment.visible = checked;
-          }
-        }
+        hider.set(checked, fragMap);
       }
     }
     setSpatialStructures((prev) => ({ ...prev, [name]: checked }));
