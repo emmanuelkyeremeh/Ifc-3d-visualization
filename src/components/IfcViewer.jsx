@@ -3,16 +3,14 @@ import * as WEBIFC from "web-ifc";
 import * as OBC from "@thatopen/components";
 import * as OBCF from "@thatopen/components-front";
 import * as THREE from "three";
-import * as FRAGS from "@thatopen/fragments";
-import { InformationCircleIcon } from "@heroicons/react/24/outline";
-import ModelInfo from "./ModelInfo";
 import "../styles/IfcViewer.css";
 
-const IfcViewer = ({ ifcFile }) => {
+const IfcViewer = ({ ifcFile, guid }) => {
   const sceneDataRef = useRef(null);
-  const [activeTool, setActiveTool] = useState(null);
-  const [showModelInfo, setShowModelInfo] = useState(false);
   const [model, setModel] = useState(null);
+  const [spatialStructures, setSpatialStructures] = useState({});
+  const [classes, setClasses] = useState({});
+  const [isMenuVisible, setIsMenuVisible] = useState(false);
   const [selectedElement, setSelectedElement] = useState(null);
 
   useEffect(() => {
@@ -39,6 +37,19 @@ const IfcViewer = ({ ifcFile }) => {
         world.scene.setup();
         world.renderer.postproduction.enabled = true;
         world.renderer.postproduction.customEffects.outlineEnabled = true;
+
+        // Optimize renderer settings for better performance
+        world.renderer.three.setPixelRatio(window.devicePixelRatio);
+        world.renderer.three.setSize(
+          container.clientWidth,
+          container.clientHeight
+        );
+        world.renderer.three.shadowMap.enabled = false; // Disable shadows for better performance
+        world.renderer.three.shadowMap.type = THREE.PCFSoftShadowMap;
+
+        // Enable frustum culling for better performance
+        world.scene.three.frustumCulled = true;
+
         world.camera.controls.setLookAt(12, 6, 8, 0, 0, -10);
       } catch (error) {
         console.error("Error initializing components or scene:", error);
@@ -54,9 +65,22 @@ const IfcViewer = ({ ifcFile }) => {
       );
 
       const fragmentIfcLoader = components.get(OBC.IfcLoader);
+      const fragments = components.get(OBC.FragmentsManager);
+      const indexer = components.get(OBC.IfcRelationsIndexer);
+      const hider = components.get(OBC.Hider);
+      const classifier = components.get(OBC.Classifier);
+      const highlighter = components.get(OBCF.Highlighter);
+      const outliner = components.get(OBCF.Outliner);
+
       try {
         await fragmentIfcLoader.setup();
         fragmentIfcLoader.settings.webIfc.COORDINATE_TO_ORIGIN = true;
+
+        // Optimize IFC loading settings
+        fragmentIfcLoader.settings.webIfc.OPTIMIZE_PROFILES = true;
+        fragmentIfcLoader.settings.webIfc.CIRCLE_SEGMENTS = 12; // Reduce circle segments for better performance
+        fragmentIfcLoader.settings.webIfc.SPATIAL_INDEX = true; // Enable spatial indexing for better performance
+
         const excludedCats = [
           WEBIFC.IFCTENDONANCHOR,
           WEBIFC.IFCREINFORCINGBAR,
@@ -70,37 +94,39 @@ const IfcViewer = ({ ifcFile }) => {
         return null;
       }
 
-      const workerUrl = "/worker.mjs";
-      const fragments = new FRAGS.FragmentsModels(workerUrl);
+      // Setup highlighter with more prominent settings
+      highlighter.setup({ world });
+      highlighter.zoomToSelection = true;
 
-      world.camera.controls.addEventListener("rest", () =>
-        fragments.update(true)
+      // Setup outliner with more visible highlighting
+      outliner.world = world;
+      outliner.enabled = true;
+      outliner.create(
+        "example",
+        new THREE.MeshBasicMaterial({
+          color: 0xffd700, // Bright yellow
+          transparent: true,
+          opacity: 0.8,
+          side: THREE.DoubleSide,
+        })
       );
-      world.camera.controls.addEventListener("update", () =>
-        fragments.update()
-      );
-
-      fragments.models.list.onItemSet.add(({ value: loadedModel }) => {
-        if (world.scene.three) {
-          loadedModel.useCamera(world.camera.three);
-          world.scene.three.add(loadedModel.object);
-          world.meshes.add(loadedModel.object);
-        }
-      });
 
       return {
         world,
         fragmentIfcLoader,
+        fragments,
         components,
         container,
-        fragments,
+        indexer,
+        hider,
+        classifier,
+        highlighter,
+        outliner,
       };
     };
 
     const loadIfcFile = async (ifcFile) => {
       try {
-        const data = await ifcFile.arrayBuffer();
-        const buffer = new Uint8Array(data);
         const sceneData = await createScene();
         if (!sceneData) {
           console.error("Failed to create scene");
@@ -108,35 +134,92 @@ const IfcViewer = ({ ifcFile }) => {
         }
         sceneDataRef.current = sceneData;
 
-        const { world, fragments } = sceneData;
+        const {
+          fragmentIfcLoader,
+          world,
+          fragments,
+          classifier,
+          indexer,
+          hider,
+          highlighter,
+          outliner,
+        } = sceneData;
 
-        if (!world.scene.three) {
-          console.error("Scene not initialized, cannot load model");
-          return;
+        // Load IFC and convert to fragments
+        const data = await ifcFile.arrayBuffer();
+        const buffer = new Uint8Array(data);
+
+        // Show loading indicator
+        console.log("Loading IFC file...");
+
+        const model = await fragmentIfcLoader.load(buffer);
+        model.name = "ifc_bim";
+        console.log("IFC file loaded, processing fragments...");
+
+        setModel(model);
+
+        world.scene.three.add(model);
+
+        // Convert to fragments and load properties
+        const fragData = fragments.export(model);
+        const fragBuffer = new Uint8Array(fragData);
+        const fragModel = fragments.load(fragBuffer);
+        world.scene.three.add(fragModel);
+
+        const properties = model.getLocalProperties();
+        if (properties) {
+          fragModel.setLocalProperties(properties);
         }
 
-        const serializer = new FRAGS.IfcImporter();
-        serializer.wasm = {
-          absolute: true,
-          path: "https://unpkg.com/web-ifc@0.0.68/",
-        };
-        const fragmentBytes = await serializer.process({ bytes: buffer });
-        if (!fragmentBytes) {
-          console.error("Failed to convert IFC to fragments");
-          return;
-        }
+        // Index relations before classification
+        console.log("Indexing relations...");
+        await indexer.process(fragModel);
 
+        // Load classifications
+        console.log("Loading classifications...");
+        await classifier.byEntity(fragModel);
         try {
-          const Model = await fragments.load(fragmentBytes, {
-            modelId: "ifc_bim",
+          await classifier.bySpatialStructure(fragModel, {
+            isolate: new Set([WEBIFC.IFCBUILDINGSTOREY]),
           });
-          setModel(Model);
-          console.log("model created and added to scene:", Model);
         } catch (error) {
-          console.error("model:", error);
+          console.warn("Failed to classify by spatial structure:", error);
         }
+
+        // Initialize spatial structures and classes for UI
+        const spatialStructuresData = {};
+        const structureNames = Object.keys(classifier.list.spatialStructures);
+        for (const name of structureNames) {
+          spatialStructuresData[name] = true;
+        }
+        setSpatialStructures(spatialStructuresData);
+
+        const classesData = {};
+        const classNames = Object.keys(classifier.list.entities);
+        for (const name of classNames) {
+          classesData[name] = true;
+        }
+        setClasses(classesData);
+
+        fragments.onFragmentsLoaded.add((loadedModel) => {
+          console.log("Fragments loaded:", loadedModel);
+        });
+
+        // Highlighter event listeners for click-to-highlight
+        highlighter.events.select.onHighlight.add((data) => {
+          outliner.clear("example");
+          outliner.add("example", data);
+          setSelectedElement(data);
+        });
+
+        highlighter.events.select.onClear.add(() => {
+          outliner.clear("example");
+          setSelectedElement(null);
+        });
+
+        console.log("IFC file processing complete");
       } catch (error) {
-        console.error("Error loading IFC file:", error);
+        console.error("Error loading IFC file or fragments:", error);
       }
     };
 
@@ -146,7 +229,8 @@ const IfcViewer = ({ ifcFile }) => {
 
     return () => {
       if (sceneDataRef.current) {
-        const { components, world, fragments } = sceneDataRef.current;
+        const { components, world, fragments, highlighter, outliner } =
+          sceneDataRef.current;
         try {
           components?.dispose();
           if (fragments) {
@@ -155,6 +239,12 @@ const IfcViewer = ({ ifcFile }) => {
             } catch (err) {
               console.error("Error disposing fragments:", err);
             }
+          }
+          if (highlighter) {
+            highlighter.dispose();
+          }
+          if (outliner) {
+            outliner.dispose();
           }
           if (world?.scene?.three) {
             world.scene.three.traverse((object) => {
@@ -171,192 +261,212 @@ const IfcViewer = ({ ifcFile }) => {
     };
   }, [ifcFile]);
 
-  useEffect(() => {
-    if (!sceneDataRef.current || !model) return;
+  const highlightByGuid = async (guid) => {
+    if (!model) return;
+    try {
+      console.log("Attempting to highlight element with GUID:", guid);
 
-    const { world, fragments, container } = sceneDataRef.current;
-    if (!world.renderer || !world.scene?.three) {
-      console.error("World is not properly initialized");
-      return;
-    }
+      // Get local ID from GUID using globalToExpressIDs
+      const localId = model.globalToExpressIDs.get(guid);
+      console.log("Local ID found:", localId);
 
-    const highlightMaterial = {
-      color: new THREE.Color("gold"),
-      renderedFaces: FRAGS.RenderedFaces.TWO,
-      opacity: 1,
-      transparent: false,
-    };
+      if (localId) {
+        // Get fragment map
+        const fragmentMap = model.getFragmentMap();
+        if (!fragmentMap) {
+          console.error("Fragment map not found");
+          return;
+        }
+        console.log("Fragment map:", fragmentMap);
 
-    let localId = null;
+        // Find the fragment ID that contains our local ID
+        let targetFragmentId = null;
+        for (const [fragmentId, localIds] of Object.entries(fragmentMap)) {
+          if (localIds.has(localId)) {
+            targetFragmentId = fragmentId;
+            break;
+          }
+        }
+        console.log("Target fragment ID:", targetFragmentId);
 
-    const highlight = async () => {
-      if (!localId || !model) return;
-      try {
-        await model.highlight([localId], highlightMaterial);
-      } catch (error) {
-        console.error("Error highlighting element:", error);
-      }
-    };
+        if (targetFragmentId) {
+          // Get the actual fragment mesh from the model
+          const fragmentMesh = model.children.find(
+            (child) => child.uuid === targetFragmentId
+          );
+          if (fragmentMesh) {
+            console.log("Found fragment mesh:", fragmentMesh);
 
-    const resetHighlight = async () => {
-      if (!localId || !model) return;
-      try {
-        await model.resetHighlight([localId]);
-      } catch (error) {
-        console.error("Error resetting highlight:", error);
-      }
-    };
+            // Create highlight material with more prominent yellow color
+            const highlightMaterial = new THREE.MeshBasicMaterial({
+              color: 0xffd700, // Bright yellow
+              transparent: true,
+              opacity: 0.9, // Increased opacity for better visibility
+              side: THREE.DoubleSide,
+              depthTest: false, // Ensure highlight is always visible
+              depthWrite: false,
+            });
 
-    const getName = async () => {
-      if (!localId || !model) return null;
-      try {
-        const [data] = await model.getItemsData([localId], {
-          attributesDefault: false,
-          attributes: ["Name"],
-        });
-        const Name = data?.Name;
-        if (!(Name && "value" in Name)) return "Unnamed Element";
-        return Name.value || "Unnamed Element";
-      } catch (error) {
-        console.error("Error getting element name:", error);
-        return "Unnamed Element";
-      }
-    };
+            // Store original material in userData for later restoration
+            if (!fragmentMesh.userData.originalMaterial) {
+              fragmentMesh.userData.originalMaterial = fragmentMesh.material;
+            }
 
-    const getAttributes = async () => {
-      if (!localId || !model) return null;
-      try {
-        const [data] = await model.getItemsData([localId], {
-          attributesDefault: true,
-          relations: {
-            IsDefinedBy: { attributes: true, relations: true },
-            DefinesOccurrence: { attributes: false, relations: false },
-          },
-        });
-        const formatPsets = (rawPsets) => {
-          if (!rawPsets || !Array.isArray(rawPsets)) return {};
-          const result = {};
-          for (const pset of rawPsets) {
-            const { Name: psetName, HasProperties } = pset;
-            if (!("value" in psetName && Array.isArray(HasProperties)))
-              continue;
-            const props = {};
-            for (const prop of HasProperties) {
-              const { Name, NominalValue } = prop;
-              if (!("value" in Name && "value" in NominalValue)) continue;
-              const name = Name.value;
-              const nominalValue = NominalValue.value;
-              if (name && nominalValue !== undefined) {
-                props[name] = nominalValue;
+            // Apply highlight material
+            fragmentMesh.material = highlightMaterial;
+
+            // Add outline effect for better visibility
+            const effects =
+              sceneDataRef.current?.world?.renderer?.postproduction
+                ?.customEffects;
+            if (effects) {
+              effects.outlineEnabled = true;
+              if (effects.outlineColor) {
+                effects.outlineColor.setHex(0xffd700);
+              }
+              if (effects.outlineThickness !== undefined) {
+                effects.outlineThickness = 2;
+              }
+              if (effects.outlineOpacity !== undefined) {
+                effects.outlineOpacity = 1;
               }
             }
-            result[psetName.value] = props;
+
+            // Zoom to the highlighted element using the camera
+            if (sceneDataRef.current?.world?.camera) {
+              const box = new THREE.Box3().setFromObject(fragmentMesh);
+              const center = box.getCenter(new THREE.Vector3());
+              const size = box.getSize(new THREE.Vector3());
+              const maxDim = Math.max(size.x, size.y, size.z);
+              const fov =
+                sceneDataRef.current.world.camera.three.fov * (Math.PI / 180);
+              let cameraZ = Math.abs(maxDim / Math.sin(fov / 2));
+
+              // Add some padding
+              cameraZ *= 1.5;
+
+              // Set camera position
+              sceneDataRef.current.world.camera.controls.setLookAt(
+                center.x + cameraZ,
+                center.y + cameraZ,
+                center.z + cameraZ,
+                center.x,
+                center.y,
+                center.z
+              );
+            }
+
+            console.log("Element highlighted successfully");
+          } else {
+            console.error("Fragment mesh not found for ID:", targetFragmentId);
           }
-          return result;
-        };
-        const formattedData = {
-          attributes: data,
-          propertySets: formatPsets(data.IsDefinedBy),
-        };
-        console.log(
-          "Selected element attributes and property sets:",
-          formattedData
-        );
-        return formattedData;
-      } catch (error) {
-        console.error("Error getting element attributes:", error);
-        return null;
-      }
-    };
-
-    const handleClick = async (event) => {
-      if (activeTool !== "modelinfo" || !model) return;
-      const mouse = new THREE.Vector2();
-      mouse.x = event.clientX;
-      mouse.y = event.clientY;
-      try {
-        const result = await model.raycast({
-          camera: world.camera.three,
-          mouse,
-          dom: world.renderer.three.domElement,
-        });
-        const promises = [];
-        if (result && result.localId !== null) {
-          promises.push(resetHighlight());
-          localId = result.localId;
-          const name = await getName();
-          await getAttributes();
-          console.log("Selected element:", { localId, name });
-          setSelectedElement({ localId, name });
-          promises.push(highlight());
         } else {
-          promises.push(resetHighlight());
-          localId = null;
-          setSelectedElement(null);
+          console.error("No fragment found containing local ID:", localId);
         }
-        await Promise.all(promises);
-      } catch (error) {
-        console.error("Error during raycasting:", error);
-        setSelectedElement(null);
+      } else {
+        console.error("No local ID found for GUID:", guid);
       }
-    };
-
-    if (activeTool === "modelinfo") {
-      container.addEventListener("click", handleClick);
+    } catch (error) {
+      console.error("Error highlighting element:", error);
     }
-
-    return () => {
-      container.removeEventListener("click", handleClick);
-      resetHighlight();
-      localId = null;
-      setSelectedElement(null);
-    };
-  }, [model, activeTool]);
+  };
 
   useEffect(() => {
-    if (!sceneDataRef.current) return;
-
-    if (activeTool === "modelinfo") {
-      setShowModelInfo(true);
-    } else {
-      setShowModelInfo(false);
+    if (guid && model) {
+      console.log("Highlighting element with GUID:", guid);
+      highlightByGuid(guid);
     }
-  }, [activeTool]);
+  }, [guid, model]);
+
+  const toggleMenu = () => {
+    setIsMenuVisible(!isMenuVisible);
+  };
+
+  const handleFloorToggle = (name, checked) => {
+    if (!sceneDataRef.current) return;
+    const { classifier, indexer, hider, fragments } = sceneDataRef.current;
+    const found = classifier.list.spatialStructures[name];
+    if (found && found.id !== null) {
+      for (const [_id, model] of fragments.groups) {
+        const foundIDs = indexer.getEntityChildren(model, found.id);
+        const fragMap = model.getFragmentMap(foundIDs);
+
+        // Instead of using hider.set, we'll directly modify the visibility
+        for (const [fragmentID, localIDs] of Object.entries(fragMap)) {
+          const fragment = model.children.find(
+            (child) => child.uuid === fragmentID
+          );
+          if (fragment) {
+            fragment.visible = checked;
+          }
+        }
+      }
+    }
+    setSpatialStructures((prev) => ({ ...prev, [name]: checked }));
+  };
+
+  const handleCategoryToggle = (name, checked) => {
+    if (!sceneDataRef.current) return;
+    const { classifier, hider } = sceneDataRef.current;
+    const found = classifier.find({ entities: [name] });
+    hider.set(checked, found);
+    setClasses((prev) => ({ ...prev, [name]: checked }));
+  };
 
   return (
     <div className="viewer-container">
-      <div className="controls">
-        <button
-          onClick={() =>
-            setActiveTool(activeTool === "modelinfo" ? null : "modelinfo")
-          }
-          className={`control-button ${
-            activeTool === "modelinfo" ? "active" : ""
-          }`}
-        >
-          <InformationCircleIcon className="icon" />
-          Model Info
-        </button>
-      </div>
       <div className="scene-wrapper">
-        <div id="scene-container" className="scene-container">
-          {activeTool === "modelinfo" && (
-            <div className="tool-instructions">
-              <div className="font-bold">Model Info Active</div>
-              <div>• Click an element to view its name</div>
-              <div>• Click elsewhere to clear selection</div>
+        <div id="scene-container" className="scene-container"></div>
+        <button
+          className="menu-toggle-button"
+          onClick={toggleMenu}
+          style={{ display: isMobile() ? "block" : "none" }}
+        >
+          <span className="icon">⚙️</span>
+        </button>
+        <div className={`control-panel ${isMenuVisible ? "visible" : ""}`}>
+          <div className="panel-section">
+            <h3>Floors</h3>
+            {Object.keys(spatialStructures).map((name) => (
+              <div key={name} className="checkbox-container">
+                <input
+                  type="checkbox"
+                  checked={spatialStructures[name]}
+                  onChange={(e) => handleFloorToggle(name, e.target.checked)}
+                />
+                <label>{name}</label>
+              </div>
+            ))}
+          </div>
+          <div className="panel-section">
+            <h3>Categories</h3>
+            {Object.keys(classes).map((name) => (
+              <div key={name} className="checkbox-container">
+                <input
+                  type="checkbox"
+                  checked={classes[name]}
+                  onChange={(e) => handleCategoryToggle(name, e.target.checked)}
+                />
+                <label>{name}</label>
+              </div>
+            ))}
+          </div>
+          {selectedElement && (
+            <div className="panel-section">
+              <h3>Selected Element</h3>
+              <div className="checkbox-container">
+                <p>Element ID: {selectedElement.localId || "Unknown"}</p>
+                {selectedElement.name && <p>Name: {selectedElement.name}</p>}
+              </div>
             </div>
           )}
         </div>
-        {showModelInfo && model && (
-          <ModelInfo
-            selectedElement={selectedElement}
-            onExit={() => setActiveTool(null)}
-          />
-        )}
       </div>
     </div>
   );
 };
+
+// Utility to detect mobile devices
+const isMobile = () => window.innerWidth <= 768;
 
 export default IfcViewer;

@@ -4,6 +4,7 @@ import "./styles/App.css";
 
 function App() {
   const [file, setFile] = useState(null);
+  const [guid, setGuid] = useState("");
 
   const handleFileChange = (event) => {
     const selectedFile = event.target.files[0];
@@ -12,21 +13,34 @@ function App() {
     }
   };
 
+  const handleGuidChange = (event) => {
+    setGuid(event.target.value);
+  };
+
   return (
     <div className="app">
       <div className="container">
-        <label className="upload-button">
-          <span>Upload IFC File</span>
+        <div className="input-group">
+          <label className="upload-button">
+            <span>Upload IFC File</span>
+            <input
+              type="file"
+              accept=".ifc"
+              onChange={handleFileChange}
+              style={{ display: "none" }}
+            />
+          </label>
           <input
-            type="file"
-            accept=".ifc"
-            onChange={handleFileChange}
-            style={{ display: "none" }}
+            type="text"
+            placeholder="Enter GUID to highlight"
+            value={guid}
+            onChange={handleGuidChange}
+            className="guid-input"
           />
-        </label>
+        </div>
       </div>
       <h1 className="app-title">🏗️ IFC Viewer</h1>
-      <IfcViewer ifcFile={file} />
+      <IfcViewer ifcFile={file} guid={guid} />
     </div>
   );
 }
