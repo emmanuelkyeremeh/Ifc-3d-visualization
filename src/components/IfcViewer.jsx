@@ -406,9 +406,15 @@ const IfcViewer = ({ ifcFile, guid }) => {
       }
 
       // Find the fragment mesh in the scene
-      const fragmentMesh = currentModel.children.find(
-        (child) => child.uuid === targetFragmentId
-      );
+      // const fragmentMesh = currentModel.children.find(
+      //   (child) => child.uuid === targetFragmentId
+      // );
+
+      const fragmentMesh =
+        sceneDataRef.current.world.scene.three.getObjectByProperty(
+          "uuid",
+          targetFragmentId
+        );
 
       if (!fragmentMesh) {
         console.error("Fragment mesh not found in scene");
