@@ -19,6 +19,8 @@ const IfcViewer = ({ ifcFile, guid }) => {
   const sceneDataRef = useRef(null);
   const modelRef = useRef(null);
   const [model, setModel] = useState(null);
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     const createScene = async () => {
@@ -75,7 +77,6 @@ const IfcViewer = ({ ifcFile, guid }) => {
       const indexer = components.get(OBC.IfcRelationsIndexer);
       const classifier = components.get(OBC.Classifier);
       const highlighter = components.get(OBCF.Highlighter);
-      const outliner = components.get(OBCF.Outliner);
 
       try {
         await fragmentIfcLoader.setup();
@@ -100,18 +101,6 @@ const IfcViewer = ({ ifcFile, guid }) => {
       highlighter.setup({ world });
       highlighter.zoomToSelection = true;
 
-      outliner.world = world;
-      outliner.enabled = true;
-      outliner.create(
-        "example",
-        new THREE.MeshBasicMaterial({
-          color: 0xffd700,
-          transparent: true,
-          opacity: 0.8,
-          side: THREE.DoubleSide,
-        })
-      );
-
       return {
         world,
         fragmentIfcLoader,
@@ -121,7 +110,6 @@ const IfcViewer = ({ ifcFile, guid }) => {
         indexer,
         classifier,
         highlighter,
-        outliner,
       };
     };
 
@@ -132,12 +120,18 @@ const IfcViewer = ({ ifcFile, guid }) => {
       }
 
       try {
+        setIsLoading(true);
+        setLoadingProgress(0);
+
+        // Stage 1: Scene setup (10%)
         const sceneData = await createScene();
         if (!sceneData) {
           console.error("Failed to create scene");
+          setIsLoading(false);
           return;
         }
         sceneDataRef.current = sceneData;
+        setLoadingProgress(10);
 
         const {
           fragmentIfcLoader,
@@ -146,36 +140,33 @@ const IfcViewer = ({ ifcFile, guid }) => {
           classifier,
           indexer,
           highlighter,
-          outliner,
         } = sceneData;
 
+        // Stage 2: Reading file (20%)
         const data = await ifcFile.arrayBuffer();
         const buffer = new Uint8Array(data);
         console.log("Loading IFC file...");
+        setLoadingProgress(30);
 
-        // //// DEBUG BEGIN
-        // console.log("All IFC entity types in web-ifc:");
-        // for (const [key, value] of Object.entries(WEBIFC)) {
-        //   if (key.startsWith("IFC")) {
-        //     console.log(`${key}: ${value}`);
-        //   }
-        // }
-        // /// DEBUG END
-
+        // Stage 3: Loading IFC model (50%)
         const loadedModel = await fragmentIfcLoader.load(buffer);
         loadedModel.name = "ifc_bim";
         console.log("IFC file loaded, processing fragments...");
+        setLoadingProgress(50);
 
         setModel(loadedModel);
         modelRef.current = loadedModel;
         console.log("Model state and ref set");
 
+        // Stage 4: Indexing relations (70%)
         console.log("Indexing relations...");
         await indexer.process(loadedModel);
+        setLoadingProgress(70);
 
         const localId = loadedModel.globalToExpressIDs.get(guid);
         if (!localId) {
           console.error("No local ID found for GUID:", guid);
+          setIsLoading(false);
           return;
         }
 
@@ -185,6 +176,7 @@ const IfcViewer = ({ ifcFile, guid }) => {
         const properties = loadedModel.getLocalProperties();
         if (!properties) {
           console.error("No properties found in model");
+          setIsLoading(false);
           return;
         }
 
@@ -198,106 +190,93 @@ const IfcViewer = ({ ifcFile, guid }) => {
           console.error("No properties found for target element");
         }
 
-        // First try to find the space containing our target element
+        // Stage 5: Finding spatial structure (80%)
         await classifier.bySpatialStructure(loadedModel, {
-          isolate: new Set([WEBIFC.IFCSPACE]),
+          isolate: new Set([WEBIFC.IFCBUILDINGSTOREY]),
         });
 
-        let targetSpaceId = null;
-        let targetSpaceName = null;
-        const spaces = classifier.list.spatialStructures;
-
-        // Try to find the space containing our element
-        for (const [spaceName, spaceData] of Object.entries(spaces)) {
-          if (spaceData.id !== null) {
-            const spaceElements = indexer.getEntityChildren(
+        let targetStoreyId = null;
+        let targetStoreyName = null;
+        const storeys = classifier.list.spatialStructures;
+        for (const [storeyName, storeyData] of Object.entries(storeys)) {
+          if (storeyData.id !== null) {
+            const storeyElements = indexer.getEntityChildren(
               loadedModel,
-              spaceData.id
+              storeyData.id
             );
-            if (spaceElements.has(localId)) {
-              targetSpaceId = spaceData.id;
-              targetSpaceName = spaceName;
+            if (storeyElements.has(localId)) {
+              targetStoreyId = storeyData.id;
+              targetStoreyName = storeyName;
               console.log(
-                `Found target space: ${spaceName} with ID ${spaceData.id}`
+                `Found target storey: ${storeyName} with ID ${storeyData.id}`
               );
               break;
             }
           }
         }
 
-        // If no space found, fall back to storey
-        if (!targetSpaceId) {
-          console.log("No space found, falling back to storey...");
-          await classifier.bySpatialStructure(loadedModel, {
-            isolate: new Set([WEBIFC.IFCBUILDINGSTOREY]),
-          });
-
-          const storeys = classifier.list.spatialStructures;
-          for (const [storeyName, storeyData] of Object.entries(storeys)) {
-            if (storeyData.id !== null) {
-              const storeyElements = indexer.getEntityChildren(
-                loadedModel,
-                storeyData.id
-              );
-              if (storeyElements.has(localId)) {
-                targetSpaceId = storeyData.id;
-                targetSpaceName = storeyName;
-                console.log(
-                  `Found target storey: ${storeyName} with ID ${storeyData.id}`
-                );
-                break;
-              }
-            }
-          }
-        }
-
-        if (!targetSpaceId) {
-          console.error(
-            "No space or storey found for element with GUID:",
-            guid
-          );
+        if (!targetStoreyId) {
+          console.error("No storey found for element with GUID:", guid);
+          setIsLoading(false);
           return;
         }
+        setLoadingProgress(80);
 
-        // Get fragments associated with the target space/storey
-        const spaceElements = indexer.getEntityChildren(
+        // Stage 6: Processing fragments (90%)
+        const storeyElements = indexer.getEntityChildren(
           loadedModel,
-          targetSpaceId
+          targetStoreyId
         );
 
-        const fragMap = loadedModel.getFragmentMap(spaceElements);
-        if (!fragMap) {
-          console.error("No fragment map returned for space/storey elements");
+        // Filter fragments to only include those that belong to the target storey
+        const fragmentMap = loadedModel.getFragmentMap(storeyElements);
+        if (!fragmentMap) {
+          console.error("No fragment map returned for storey elements");
+          setIsLoading(false);
           return;
         }
 
-        // Add fragments to the scene
         const fragmentMeshes = [];
         console.log("Processing fragments for scene...");
 
-        for (const fragmentID of Object.keys(fragMap)) {
+        for (const fragmentID of Object.keys(fragmentMap)) {
           const fragmentMesh = loadedModel.children.find(
             (child) => child.uuid === fragmentID
           );
 
           if (fragmentMesh) {
-            if (fragmentMesh.currentLOD !== undefined) {
-              fragmentMesh.currentLOD = 0;
+            // Verify that the fragment's elements are exclusively from the target storey
+            const fragmentLocalIds = fragmentMap[fragmentID];
+            let isValidFragment = true;
+
+            // Check if all local IDs in the fragment are in storeyElements
+            for (const fragLocalId of fragmentLocalIds) {
+              if (!storeyElements.has(fragLocalId)) {
+                isValidFragment = false;
+                break;
+              }
             }
-            fragmentMeshes.push(fragmentMesh);
-            world.scene.three.add(fragmentMesh);
-            console.log(`Added fragment to scene: ${fragmentID}`);
+
+            if (isValidFragment) {
+              if (fragmentMesh.currentLOD !== undefined) {
+                fragmentMesh.currentLOD = 0;
+              }
+              fragmentMeshes.push(fragmentMesh);
+              world.scene.three.add(fragmentMesh);
+            }
           }
         }
 
         if (fragmentMeshes.length === 0) {
-          console.error("No fragments found for the target space/storey");
+          console.error("No fragments found for the target storey");
+          setIsLoading(false);
           return;
         }
 
         console.log(
           `Successfully added ${fragmentMeshes.length} fragments to scene`
         );
+        setLoadingProgress(90);
 
         // Set properties for the model
         loadedModel.setLocalProperties(properties);
@@ -306,24 +285,16 @@ const IfcViewer = ({ ifcFile, guid }) => {
           console.log("Fragments loaded:", loadedModel);
         });
 
-        highlighter.events.select.onHighlight.add((data) => {
-          outliner.clear("example");
-          outliner.add("example", data);
-        });
-
-        highlighter.events.select.onClear.add(() => {
-          outliner.clear("example");
-        });
-
-        // Wait for the next render cycle to ensure model state is updated
-        setTimeout(() => {
-          console.log("Attempting to highlight element...");
-          highlightByGuid(guid);
-        }, 100); // Increased timeout to ensure fragments are loaded
+        // Stage 7: Highlighting (100%)
+        console.log("Attempting to highlight element...");
+        await highlightByGuid(guid);
+        setLoadingProgress(100);
+        setTimeout(() => setIsLoading(false), 2000); // Brief delay for smooth transition
 
         console.log("IFC file processing complete");
       } catch (error) {
         console.error("Error loading IFC file or fragments:", error);
+        setIsLoading(false);
       }
     };
 
@@ -333,7 +304,7 @@ const IfcViewer = ({ ifcFile, guid }) => {
 
     return () => {
       if (sceneDataRef.current) {
-        const { components, world, fragments, highlighter, outliner } =
+        const { components, world, fragments, highlighter } =
           sceneDataRef.current;
         try {
           components?.dispose();
@@ -342,9 +313,6 @@ const IfcViewer = ({ ifcFile, guid }) => {
           }
           if (highlighter) {
             highlighter.dispose();
-          }
-          if (outliner) {
-            outliner.dispose();
           }
           if (world?.scene?.three) {
             world.scene.three.traverse((object) => {
@@ -405,11 +373,6 @@ const IfcViewer = ({ ifcFile, guid }) => {
         return;
       }
 
-      // Find the fragment mesh in the scene
-      // const fragmentMesh = currentModel.children.find(
-      //   (child) => child.uuid === targetFragmentId
-      // );
-
       const fragmentMesh =
         sceneDataRef.current.world.scene.three.getObjectByProperty(
           "uuid",
@@ -421,11 +384,11 @@ const IfcViewer = ({ ifcFile, guid }) => {
         return;
       }
 
-      // Create highlight material
+      // Create aggressive highlight material
       const highlightMaterial = new THREE.MeshBasicMaterial({
-        color: 0xffd700,
-        transparent: true,
-        opacity: 0.9,
+        color: 0xff0000, // Bright red for aggressive highlighting
+        transparent: false,
+        opacity: 1.0,
         side: THREE.DoubleSide,
         depthTest: false,
         depthWrite: false,
@@ -439,15 +402,23 @@ const IfcViewer = ({ ifcFile, guid }) => {
       // Apply highlight material
       fragmentMesh.material = highlightMaterial;
 
-      // Configure post-processing effects
+      // Configure post-processing effects for aggressive highlighting
       const effects =
         sceneDataRef.current?.world?.renderer?.postproduction?.customEffects;
       if (effects) {
         effects.outlineEnabled = true;
-        effects.outlineColor?.setHex(0xffd700);
-        effects.outlineThickness = 2;
+        effects.outlineColor?.setHex(0xff0000);
+        effects.outlineThickness = 4;
         effects.outlineOpacity = 1;
       }
+
+      // Dim other elements to emphasize the highlighted element
+      currentModel.children.forEach((child) => {
+        if (child.uuid !== targetFragmentId && child.material) {
+          child.material.opacity = 0.3;
+          child.material.transparent = true;
+        }
+      });
 
       // Zoom to the highlighted element
       if (sceneDataRef.current?.world?.camera) {
@@ -478,6 +449,20 @@ const IfcViewer = ({ ifcFile, guid }) => {
 
   return (
     <div className="viewer-container">
+      {isLoading && (
+        <div className="loading-overlay">
+          <div className="loading-content">
+            <h2>Loading IFC Model...</h2>
+            <div className="progress-bar">
+              <div
+                className="progress-fill"
+                style={{ width: `${loadingProgress}%` }}
+              ></div>
+            </div>
+            <p>{Math.round(loadingProgress)}%</p>
+          </div>
+        </div>
+      )}
       <div className="scene-wrapper">
         <div id="scene-container" className="scene-container"></div>
       </div>
