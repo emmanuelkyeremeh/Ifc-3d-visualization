@@ -337,114 +337,43 @@ const IfcViewer = ({ ifcFile, guid }) => {
 
   const highlightByGuid = async (guid) => {
     const currentModel = modelRef.current;
-    if (!currentModel) {
-      console.error("No model available for highlighting");
+    const sceneData = sceneDataRef.current;
+
+    if (!currentModel || !sceneData) {
+      console.error("Model or scene not available for highlighting");
       return;
     }
-    try {
-      console.log("Attempting to highlight element with GUID:", guid);
 
-      const localId = currentModel.globalToExpressIDs.get(guid);
-      console.log("Local ID found:", localId);
+    const { highlighter } = sceneData;
 
-      if (!localId) {
-        console.error("No local ID found for GUID:", guid);
-        return;
-      }
+    const rawId = currentModel.globalToExpressIDs.get(guid);
+    const localId = typeof rawId === "string" ? parseInt(rawId, 10) : rawId;
 
-      // Get all fragments in the model
-      const fragmentMap = currentModel.getFragmentMap();
-      if (!fragmentMap) {
-        console.error("Fragment map not found");
-        return;
-      }
-
-      // Find which fragment contains our element
-      let targetFragmentId = null;
-      for (const [fragmentId, localIds] of Object.entries(fragmentMap)) {
-        if (localIds && localIds.has(localId)) {
-          targetFragmentId = fragmentId;
-          break;
-        }
-      }
-
-      if (!targetFragmentId) {
-        console.error("No fragment found containing local ID:", localId);
-        return;
-      }
-
-      const fragmentMesh =
-        sceneDataRef.current.world.scene.three.getObjectByProperty(
-          "uuid",
-          targetFragmentId
-        );
-
-      if (!fragmentMesh) {
-        console.error("Fragment mesh not found in scene");
-        return;
-      }
-
-      // Create aggressive highlight material
-      const highlightMaterial = new THREE.MeshBasicMaterial({
-        color: 0xff0000, // Bright red for aggressive highlighting
-        transparent: false,
-        opacity: 1.0,
-        side: THREE.DoubleSide,
-        depthTest: false,
-        depthWrite: false,
-      });
-
-      // Store original material if not already stored
-      if (!fragmentMesh.userData.originalMaterial) {
-        fragmentMesh.userData.originalMaterial = fragmentMesh.material;
-      }
-
-      // Apply highlight material
-      fragmentMesh.material = highlightMaterial;
-
-      // Configure post-processing effects for aggressive highlighting
-      const effects =
-        sceneDataRef.current?.world?.renderer?.postproduction?.customEffects;
-      if (effects) {
-        effects.outlineEnabled = true;
-        effects.outlineColor?.setHex(0xff0000);
-        effects.outlineThickness = 4;
-        effects.outlineOpacity = 1;
-      }
-
-      // Dim other elements to emphasize the highlighted element
-      currentModel.children.forEach((child) => {
-        if (child.uuid !== targetFragmentId && child.material) {
-          child.material.opacity = 0.3;
-          child.material.transparent = true;
-        }
-      });
-
-      // Zoom to the highlighted element
-      if (sceneDataRef.current?.world?.camera) {
-        const box = new THREE.Box3().setFromObject(fragmentMesh);
-        const center = box.getCenter(new THREE.Vector3());
-        const size = box.getSize(new THREE.Vector3());
-        const maxDim = Math.max(size.x, size.y, size.z);
-        const fov =
-          sceneDataRef.current.world.camera.three.fov * (Math.PI / 180);
-        let cameraZ = Math.abs(maxDim / Math.sin(fov / 2));
-        cameraZ *= 1.5;
-
-        sceneDataRef.current.world.camera.controls.setLookAt(
-          center.x + cameraZ,
-          center.y + cameraZ,
-          center.z + cameraZ,
-          center.x,
-          center.y,
-          center.z
-        );
-      }
-
-      console.log("Element highlighted successfully");
-    } catch (error) {
-      console.error("Error highlighting element:", error);
+    if (typeof localId !== "number" || isNaN(localId)) {
+      console.error("Invalid local ID for GUID:", guid, "Got:", localId);
+      return;
     }
+
+    // Clear previous highlights
+    highlighter.clear();
+
+    const fragmentMap = currentModel.getFragmentMap();
+    for (const fragmentID in fragmentMap) {
+      const expressIDs = fragmentMap[fragmentID];
+      if (expressIDs instanceof Set && expressIDs.has(localId)) {
+        const fragmentIdMap = {
+          [fragmentID]: new Set([localId]),
+        };
+        try {
+          await highlighter.highlightByID("select", fragmentIdMap, true);
+        } catch (err) {
+          console.error("highlightByID error:", err);
+        }
+        return;
+      }
+    }
+
+    console.warn("Could not find fragment containing local ID:", localId);
   };
 
   return (
