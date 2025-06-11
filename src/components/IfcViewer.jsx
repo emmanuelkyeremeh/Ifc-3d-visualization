@@ -3,7 +3,7 @@ import * as WEBIFC from "web-ifc";
 import * as OBC from "@thatopen/components";
 import * as OBCF from "@thatopen/components-front";
 import * as THREE from "three";
-import "../styles/IfcViewer.css";
+import "../styles/ifcViewer.css";
 
 // Helper function to get IFC type name from numeric type
 const getIfcTypeName = (type) => {
