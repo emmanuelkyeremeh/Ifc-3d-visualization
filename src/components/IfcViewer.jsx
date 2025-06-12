@@ -287,9 +287,8 @@ const IfcViewer = ({ ifcFile, guid }) => {
 
         // Stage 7: Highlighting (100%)
         console.log("Attempting to highlight element...");
-        await highlightByGuid(guid);
+        highlightByGuid(guid);
         setLoadingProgress(100);
-        setTimeout(() => setIsLoading(false), 2000); // Brief delay for smooth transition
 
         console.log("IFC file processing complete");
       } catch (error) {
@@ -365,7 +364,7 @@ const IfcViewer = ({ ifcFile, guid }) => {
           [fragmentID]: new Set([localId]),
         };
         try {
-          await highlighter.highlightByID("select", fragmentIdMap, true);
+          highlighter.highlightByID("select", fragmentIdMap, true);
         } catch (err) {
           console.error("highlightByID error:", err);
         }
