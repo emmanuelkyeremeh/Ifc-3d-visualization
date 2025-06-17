@@ -12,302 +12,290 @@ const IfcViewer = ({ ifcFile, guid }) => {
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
 
-  useEffect(() => {
-    const createScene = async () => {
-      const container = document.getElementById("scene-container");
-      if (!container) {
-        console.error("Scene container not found");
-        return null;
+  const createScene = async () => {
+    const container = document.getElementById("scene-container");
+    if (!container) {
+      console.error("Scene container not found");
+      return null;
+    }
+
+    const components = new OBC.Components();
+    const worlds = components.get(OBC.Worlds);
+    const world = worlds.create(
+      OBC.SimpleScene,
+      OBC.OrthoPerspectiveCamera,
+      OBCF.PostproductionRenderer
+    );
+
+    world.scene = new OBC.SimpleScene(components);
+    world.renderer = new OBCF.PostproductionRenderer(components, container);
+    world.camera = new OBC.OrthoPerspectiveCamera(components);
+
+    try {
+      await components.init();
+      if (!world.scene.three) {
+        throw new Error("Scene initialization failed");
       }
+      world.scene.setup();
+      world.scene.three.background = null;
+      world.renderer.postproduction.enabled = true;
+      world.renderer.postproduction.customEffects.outlineEnabled = true;
 
-      const components = new OBC.Components();
-      const worlds = components.get(OBC.Worlds);
-      const world = worlds.create(
-        OBC.SimpleScene,
-        OBC.OrthoPerspectiveCamera,
-        OBCF.PostproductionRenderer
+      world.renderer.three.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      world.renderer.three.setSize(
+        container.clientWidth,
+        container.clientHeight
       );
+      world.renderer.three.shadowMap.enabled = false;
+      world.renderer.three.shadowMap.type = THREE.PCFSoftShadowMap;
 
-      world.scene = new OBC.SimpleScene(components);
-      world.renderer = new OBCF.PostproductionRenderer(components, container);
-      world.camera = new OBC.OrthoPerspectiveCamera(components);
+      world.camera.controls.setLookAt(12, 6, 8, 0, 0, -10);
+    } catch (error) {
+      console.error("Error initializing components or scene:", error);
+      return null;
+    }
 
-      try {
-        await components.init();
-        if (!world.scene.three) {
-          throw new Error("Scene initialization failed");
-        }
-        world.scene.setup();
-        world.scene.three.background = null;
-        world.renderer.postproduction.enabled = true;
-        world.renderer.postproduction.customEffects.outlineEnabled = true;
+    const grids = components.get(OBC.Grids);
+    const grid = grids.create(world);
+    grid.three.position.y -= 1;
+    grid.config.color.setHex(0x666666);
+    world.renderer.postproduction.customEffects.excludedMeshes.push(grid.three);
 
-        world.renderer.three.setPixelRatio(
-          Math.min(window.devicePixelRatio, 2)
-        );
-        world.renderer.three.setSize(
-          container.clientWidth,
-          container.clientHeight
-        );
-        world.renderer.three.shadowMap.enabled = false;
-        world.renderer.three.shadowMap.type = THREE.PCFSoftShadowMap;
+    const streamer = components.get(OBCF.IfcStreamer);
+    streamer.world = world;
+    streamer.useCache = true;
+    streamer.culler.threshold = 10;
+    streamer.culler.maxHiddenTime = 1000;
+    streamer.culler.maxLostTime = 3000;
 
-        world.camera.controls.setLookAt(12, 6, 8, 0, 0, -10);
-      } catch (error) {
-        console.error("Error initializing components or scene:", error);
-        return null;
-      }
+    const stats = new Stats();
+    stats.showPanel(2);
+    document.body.append(stats.dom);
+    stats.dom.style.left = "0px";
+    stats.dom.style.zIndex = "unset";
+    world.renderer.onBeforeUpdate.add(() => stats.begin());
+    world.renderer.onAfterUpdate.add(() => stats.end());
 
-      const grids = components.get(OBC.Grids);
-      const grid = grids.create(world);
-      grid.three.position.y -= 1;
-      grid.config.color.setHex(0x666666);
-      world.renderer.postproduction.customEffects.excludedMeshes.push(
-        grid.three
-      );
+    world.camera.controls.addEventListener("sleep", () => {
+      streamer.culler.needsUpdate = true;
+    });
 
-      const streamer = components.get(OBCF.IfcStreamer);
-      streamer.world = world;
-      streamer.useCache = true;
-      streamer.culler.threshold = 10;
-      streamer.culler.maxHiddenTime = 1000;
-      streamer.culler.maxLostTime = 3000;
+    const highlighter = components.get(OBCF.Highlighter);
+    highlighter.setup({ world });
+    highlighter.zoomToSelection = true;
 
-      const stats = new Stats();
-      stats.showPanel(2);
-      document.body.append(stats.dom);
-      stats.dom.style.left = "0px";
-      stats.dom.style.zIndex = "unset";
-      world.renderer.onBeforeUpdate.add(() => stats.begin());
-      world.renderer.onAfterUpdate.add(() => stats.end());
+    return { world, streamer, components, container, highlighter };
+  };
 
-      world.camera.controls.addEventListener("sleep", () => {
-        streamer.culler.needsUpdate = true;
+  const processIfcFile = async (file) => {
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetch("http://localhost:3000/api/processIfc", {
+        method: "POST",
+        body: formData,
       });
 
-      const highlighter = components.get(OBCF.Highlighter);
-      highlighter.setup({ world });
-      highlighter.zoomToSelection = true;
-
-      return { world, streamer, components, container, highlighter };
-    };
-
-    const processIfcFile = async (file) => {
-      try {
-        const formData = new FormData();
-        formData.append("file", file);
-
-        const response = await fetch("http://localhost:3000/api/processIfc", {
-          method: "POST",
-          body: formData,
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(
-            `Failed to process IFC file: ${
-              errorData.error || response.statusText
-            }`
-          );
-        }
-
-        const result = await response.json();
-        if (!result.tilesUrl || !result.modelId || !result.geometryUrl) {
-          throw new Error(
-            "Invalid backend response: missing tilesUrl, modelId, or geometryUrl"
-          );
-        }
-
-        // Ensure tilesUrl ends with slash for proper URL resolution
-        const tilesUrl = result.tilesUrl.endsWith("/")
-          ? result.tilesUrl
-          : `${result.tilesUrl}/`;
-
-        return {
-          tilesUrl,
-          geometryUrl: result.geometryUrl,
-          propertiesUrl: result.propertiesUrl,
-          metadataUrl: result.metadataUrl,
-          modelId: result.modelId,
-        };
-      } catch (error) {
-        console.error("Error processing IFC file:", error);
-        throw error;
-      }
-    };
-
-    const loadIfcStream = async (ifcFile, guid) => {
-      if (!ifcFile || !guid) {
-        console.log("Missing IFC file or GUID, skipping loading");
-        return;
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          `Failed to process IFC file: ${
+            errorData.error || response.statusText
+          }`
+        );
       }
 
-      try {
-        setIsLoading(true);
-        setLoadingProgress(0);
-
-        const sceneData = await createScene();
-        if (!sceneData) {
-          console.error("Failed to create scene");
-          setIsLoading(false);
-          return;
-        }
-        sceneDataRef.current = sceneData;
-        setLoadingProgress(10);
-
-        const { streamer } = sceneData;
-
-        console.log("Processing IFC file...");
-        const { tilesUrl, geometryUrl, propertiesUrl } = await processIfcFile(
-          ifcFile
+      const result = await response.json();
+      if (!result.tilesUrl || !result.modelId || !result.geometryUrl) {
+        throw new Error(
+          "Invalid backend response: missing tilesUrl, modelId, or geometryUrl"
         );
-        console.log("Backend response:", {
-          tilesUrl,
-          geometryUrl,
-          propertiesUrl,
-        });
-        setLoadingProgress(30);
+      }
 
-        // Set streamer URL to the base directory containing tiles
-        streamer.url = tilesUrl;
-        console.log("Streamer URL set to:", streamer.url);
+      const tilesUrl = result.tilesUrl.endsWith("/")
+        ? result.tilesUrl
+        : `${result.tilesUrl}/`;
 
-        console.log("Fetching geometry and properties data...");
+      return {
+        tilesUrl,
+        geometryUrl: result.geometryUrl,
+        propertiesUrl: result.propertiesUrl,
+        metadataUrl: result.metadataUrl,
+        modelId: result.modelId,
+      };
+    } catch (error) {
+      console.error("Error processing IFC file:", error);
+      throw error;
+    }
+  };
 
-        // Fetch geometry data in the format expected by streamer
-        const rawGeometryData = await fetch(geometryUrl);
-        if (!rawGeometryData.ok) {
-          throw new Error(
-            `Failed to fetch geometry data from ${geometryUrl}: ${rawGeometryData.statusText}`
-          );
-        }
-        const geometryData = await rawGeometryData.json();
-        console.log("Geometry data loaded:", {
-          hasAssets: !!geometryData.assets,
-          hasGeometries: !!geometryData.geometries,
-          globalDataFileId: geometryData.globalDataFileId,
-          assetsCount: geometryData.assets?.length || 0,
-          geometriesCount: Object.keys(geometryData.geometries || {}).length,
-        });
+  const loadIfcStream = async (ifcFile) => {
+    if (!ifcFile) {
+      console.log("Missing IFC file, skipping loading");
+      return;
+    }
 
-        let propertiesData = null;
-        if (propertiesUrl) {
-          try {
-            const rawPropertiesData = await fetch(propertiesUrl);
-            if (rawPropertiesData.ok) {
-              propertiesData = await rawPropertiesData.json();
-              console.log("Properties data loaded:", {
-                hasTypes: !!propertiesData.types,
-                hasIds: !!propertiesData.ids,
-                indexesFile: propertiesData.indexesFile,
-              });
-            } else {
-              console.warn(
-                `Failed to fetch properties: ${rawPropertiesData.statusText}`
-              );
-            }
-          } catch (propError) {
-            console.warn("Error loading properties:", propError.message);
-          }
-        }
-        setLoadingProgress(50);
+    try {
+      setIsLoading(true);
+      setLoadingProgress(0);
 
-        console.log("Loading model with streamer...");
-
-        // Load the model using the correct API - geometry data directly
-        const loadedModel = await streamer.load(
-          geometryData,
-          true,
-          propertiesData
-        );
-
-        if (!loadedModel) {
-          throw new Error("Failed to load model - streamer returned null");
-        }
-
-        loadedModel.name = "ifc_bim_streamed";
-        setModel(loadedModel);
-        modelRef.current = loadedModel;
-        setLoadingProgress(80);
-
-        console.log("Model loaded successfully:", {
-          uuid: loadedModel.uuid,
-          hasFragments: loadedModel.hasFragments,
-          fragmentsCount: loadedModel.items?.size || 0,
-        });
-
-        console.log("Attempting to highlight element...");
-        await highlightByGuid(guid);
-        setLoadingProgress(100);
-
-        console.log("IFC streaming complete");
-      } catch (error) {
-        console.error("Error streaming IFC model:", error);
-        console.error("Error stack:", error.stack);
-      } finally {
+      const sceneData = await createScene();
+      if (!sceneData) {
+        console.error("Failed to create scene");
         setIsLoading(false);
+        return;
       }
-    };
+      sceneDataRef.current = sceneData;
+      setLoadingProgress(10);
 
-    const highlightByGuid = async (guid) => {
-      const currentModel = modelRef.current;
-      const sceneData = sceneDataRef.current;
+      const { streamer } = sceneData;
 
-      if (!currentModel || !sceneData) {
-        console.error("Model or scene not available for highlighting");
+      console.log("Processing IFC file...");
+      const { tilesUrl, geometryUrl, propertiesUrl } = await processIfcFile(
+        ifcFile
+      );
+      console.log("Backend response:", {
+        tilesUrl,
+        geometryUrl,
+        propertiesUrl,
+      });
+      setLoadingProgress(30);
+
+      streamer.url = tilesUrl;
+      console.log("Streamer URL set to:", streamer.url);
+
+      console.log("Fetching geometry and properties data...");
+
+      const rawGeometryData = await fetch(geometryUrl);
+      if (!rawGeometryData.ok) {
+        throw new Error(
+          `Failed to fetch geometry data from ${geometryUrl}: ${rawGeometryData.statusText}`
+        );
+      }
+      const geometryData = await rawGeometryData.json();
+      console.log("Geometry data loaded:", {
+        hasAssets: !!geometryData.assets,
+        hasGeometries: !!geometryData.geometries,
+        globalDataFileId: geometryData.globalDataFileId,
+        assetsCount: geometryData.assets?.length || 0,
+        geometriesCount: Object.keys(geometryData.geometries || {}).length,
+      });
+
+      let propertiesData = null;
+      if (propertiesUrl) {
+        try {
+          const rawPropertiesData = await fetch(propertiesUrl);
+          if (rawPropertiesData.ok) {
+            propertiesData = await rawPropertiesData.json();
+            console.log("Properties data loaded:", {
+              hasTypes: !!propertiesData.types,
+              hasIds: !!propertiesData.ids,
+              indexesFile: propertiesData.indexesFile,
+            });
+          } else {
+            console.warn(
+              `Failed to fetch properties: ${rawPropertiesData.statusText}`
+            );
+          }
+        } catch (propError) {
+          console.warn("Error loading properties:", propError.message);
+        }
+      }
+      setLoadingProgress(50);
+
+      console.log("Loading model with streamer...");
+
+      const loadedModel = await streamer.load(
+        geometryData,
+        true,
+        propertiesData
+      );
+
+      if (!loadedModel) {
+        throw new Error("Failed to load model - streamer returned null");
+      }
+
+      loadedModel.name = "ifc_bim_streamed";
+      setModel(loadedModel);
+      modelRef.current = loadedModel;
+      setLoadingProgress(100);
+
+      console.log("Model loaded successfully:", {
+        uuid: loadedModel.uuid,
+        hasFragments: loadedModel.hasFragments,
+        fragmentsCount: loadedModel.items?.size || 0,
+      });
+
+      console.log("IFC streaming complete");
+    } catch (error) {
+      console.error("Error streaming IFC model:", error);
+      console.error("Error stack:", error.stack);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const highlightByGuid = async (guid) => {
+    const currentModel = modelRef.current;
+    const sceneData = sceneDataRef.current;
+
+    if (!currentModel || !sceneData || !guid) {
+      console.error("Model, scene, or guid not available for highlighting");
+      return;
+    }
+
+    try {
+      const { highlighter } = sceneData;
+
+      if (!currentModel.globalToExpressIDs) {
+        console.warn("Model does not have globalToExpressIDs mapping");
         return;
       }
 
-      try {
-        const { highlighter } = sceneData;
+      const rawId = currentModel.globalToExpressIDs.get(guid);
+      const localId = typeof rawId === "string" ? parseInt(rawId, 10) : rawId;
 
-        // Check if the model has the GUID mapping
-        if (!currentModel.globalToExpressIDs) {
-          console.warn("Model does not have globalToExpressIDs mapping");
-          return;
-        }
+      if (typeof localId !== "number" || isNaN(localId)) {
+        console.error("Invalid local ID for GUID:", guid, "Got:", localId);
+        return;
+      }
 
-        const rawId = currentModel.globalToExpressIDs.get(guid);
-        const localId = typeof rawId === "string" ? parseInt(rawId, 10) : rawId;
+      console.log(
+        `Highlighting element with GUID: ${guid}, Local ID: ${localId}`
+      );
 
-        if (typeof localId !== "number" || isNaN(localId)) {
-          console.error("Invalid local ID for GUID:", guid, "Got:", localId);
-          return;
-        }
+      highlighter.clear();
 
-        console.log(
-          `Highlighting element with GUID: ${guid}, Local ID: ${localId}`
-        );
-
-        highlighter.clear();
-
-        const fragmentMap = currentModel.getFragmentMap();
-        for (const fragmentID in fragmentMap) {
-          const expressIDs = fragmentMap[fragmentID];
-          if (expressIDs instanceof Set && expressIDs.has(localId)) {
-            const fragmentIdMap = {
-              [fragmentID]: new Set([localId]),
-            };
-            try {
-              highlighter.highlightByID("select", fragmentIdMap, true, true);
-              console.log(
-                `Successfully highlighted element in fragment: ${fragmentID}`
-              );
-              return;
-            } catch (err) {
-              console.error("highlightByID error:", err);
-            }
+      const fragmentMap = currentModel.getFragmentMap();
+      for (const fragmentID in fragmentMap) {
+        const expressIDs = fragmentMap[fragmentID];
+        if (expressIDs instanceof Set && expressIDs.has(localId)) {
+          const fragmentIdMap = {
+            [fragmentID]: new Set([localId]),
+          };
+          try {
+            highlighter.highlightByID("select", fragmentIdMap, true, true);
+            console.log(
+              `Successfully highlighted element in fragment: ${fragmentID}`
+            );
+            return;
+          } catch (err) {
+            console.error("highlightByID error:", err);
           }
         }
-
-        console.warn("Could not find fragment containing local ID:", localId);
-      } catch (error) {
-        console.error("Error in highlightByGuid:", error);
       }
-    };
 
-    if (ifcFile && guid) {
-      loadIfcStream(ifcFile, guid);
+      console.warn("Could not find fragment containing local ID:", localId);
+    } catch (error) {
+      console.error("Error in highlightByGuid:", error);
+    }
+  };
+
+  // Load IFC when ifcFile is provided
+  useEffect(() => {
+    if (ifcFile) {
+      loadIfcStream(ifcFile);
     }
 
     return () => {
@@ -316,7 +304,6 @@ const IfcViewer = ({ ifcFile, guid }) => {
         try {
           components?.dispose();
           if (world?.scene?.three) {
-            // Clean up scene resources
             world.scene.three.clear();
           }
         } catch (error) {
@@ -326,7 +313,14 @@ const IfcViewer = ({ ifcFile, guid }) => {
         console.log("Scene resources disposed.");
       }
     };
-  }, [ifcFile, guid]);
+  }, [ifcFile]);
+
+  // Highlight when guid and model are available
+  useEffect(() => {
+    if (guid && model) {
+      highlightByGuid(guid);
+    }
+  }, [guid, model]);
 
   return (
     <div className="viewer-container">
